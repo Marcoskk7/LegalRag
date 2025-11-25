@@ -1,0 +1,173 @@
+.contract-analysis {
+  min-height: 100vh;
+  background: #f0f2f5;
+
+  .ant-page-header {
+    background: #fff;
+    margin-bottom: 24px;
+  }
+
+  .analysis-content {
+    padding: 0 24px 24px;
+
+    .contract-text-panel {
+      height: 700px;
+      overflow-y: auto;
+      padding: 24px;
+      background: #fff;
+      border-radius: 8px;
+      line-height: 2;
+      font-size: 14px;
+      white-space: pre-wrap;
+
+      .highlight {
+        padding: 2px 0;
+        cursor: pointer;
+        transition: all 0.3s;
+
+        &:hover {
+          opacity: 0.8;
+        }
+
+        &.risk {
+          background-color: #fff1f0;
+          border-bottom: 2px solid #ff4d4f;
+        }
+
+        &.suggestion {
+          background-color: #fffbe6;
+          border-bottom: 2px solid #faad14;
+        }
+
+        &.legal {
+          background-color: #e6f7ff;
+          border-bottom: 2px solid #1890ff;
+        }
+
+        &.active {
+          font-weight: 600;
+        }
+      }
+    }
+
+    .analysis-panel {
+      .panel-section {
+        margin-bottom: 16px;
+
+        .section-title {
+          font-size: 16px;
+          font-weight: 600;
+          margin-bottom: 12px;
+          padding-left: 8px;
+          border-left: 4px solid #1890ff;
+        }
+
+        .risk-item {
+          cursor: pointer;
+          transition: all 0.3s;
+          border-left: 3px solid transparent;
+
+          &:hover {
+            border-left-color: #ff4d4f;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+          }
+
+          .risk-level {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-size: 12px;
+
+            &.high {
+              background: #ff4d4f;
+              color: #fff;
+            }
+
+            &.medium {
+              background: #faad14;
+              color: #fff;
+            }
+
+            &.low {
+              background: #52c41a;
+              color: #fff;
+            }
+          }
+        }
+
+        .suggestion-item, .legal-item {
+          cursor: pointer;
+          transition: all 0.3s;
+
+          &:hover {
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+          }
+        }
+
+        .diff-text {
+          .original {
+            color: #ff4d4f;
+            text-decoration: line-through;
+          }
+
+          .revised {
+            color: #52c41a;
+            font-weight: 500;
+          }
+        }
+
+        .legal-score {
+          .ant-rate {
+            font-size: 12px;
+          }
+        }
+      }
+    }
+  }
+}
+
+.detail-modal {
+  .modal-section {
+    margin-bottom: 16px;
+
+    .section-label {
+      font-weight: 600;
+      color: #666;
+      margin-bottom: 8px;
+    }
+
+    .section-content {
+      padding: 12px;
+      background: #fafafa;
+      border-radius: 4px;
+      line-height: 1.8;
+    }
+  }
+
+  .diff-display {
+    .diff-row {
+      margin-bottom: 12px;
+
+      .diff-label {
+        font-weight: 600;
+        margin-bottom: 4px;
+      }
+
+      .diff-content {
+        padding: 12px;
+        border-radius: 4px;
+        line-height: 1.8;
+
+        &.original {
+          background: #fff1f0;
+          border-left: 4px solid #ff4d4f;
+        }
+
+        &.revised {
+          background: #f6ffed;
+          border-left: 4px solid #52c41a;
+        }
+      }
+    }
+  }
+}

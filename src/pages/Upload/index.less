@@ -1,0 +1,38 @@
+.contract-upload-page {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  //background: linear-gradient(135deg, #683b2b 0%, #e7c3a2 100%);
+
+  .upload-container {
+    width: 600px;
+    background: #fff;
+    border-radius: 16px;
+    padding: 48px;
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+
+    .upload-header {
+      text-align: center;
+      margin-bottom: 40px;
+
+      h1 {
+        font-size: 28px;
+        font-weight: 600;
+        color: #333;
+        margin-bottom: 12px;
+      }
+
+      p {
+        color: #666;
+        font-size: 14px;
+      }
+    }
+
+    .upload-content {
+      .ant-upload-drag {
+        border-radius: 8px;
+      }
+    }
+  }
+}
