@@ -34,6 +34,11 @@ export default defineConfig({
       path: '/upload',
       component: './Upload',
     },
+    {
+      name:'分析',
+      path: '/contract-analysis',
+      component: './ContractAnalysis',
+    }
   ],
   npmClient: 'pnpm',
 });
