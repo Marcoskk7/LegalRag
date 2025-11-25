@@ -14,16 +14,21 @@
     "@ant-design/icons": "^5.0.1",
     "@ant-design/pro-components": "^2.4.4",
     "@umijs/max": "^4.5.3",
-    "antd": "^5.4.0"
+    "antd": "^5.4.0",
+    "lucide": "^0.554.0",
+    "lucide-react": "^0.554.0"
   },
   "devDependencies": {
     "@types/react": "^18.0.33",
     "@types/react-dom": "^18.0.11",
+    "autoprefixer": "^10.4.22",
     "husky": "^9",
     "lint-staged": "^13.2.0",
+    "postcss": "^8.5.6",
     "prettier": "^2.8.7",
     "prettier-plugin-organize-imports": "^3.2.2",
     "prettier-plugin-packagejson": "^2.4.3",
+    "tailwindcss": "3.4.1",
     "typescript": "^5.0.3"
   }
 }

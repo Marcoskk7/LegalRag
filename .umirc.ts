@@ -35,6 +35,12 @@ export default defineConfig({
       component: './Upload',
     },
     {
+      name: 'Portal',
+      path: '/portal',
+      component: './Portal',
+      layout: false,
+    },
+    {
       name:'分析',
       path: '/contract-analysis',
       component: './ContractAnalysis',
