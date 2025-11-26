@@ -1,11 +1,6 @@
 import { defineConfig } from '@umijs/max';
 
 export default defineConfig({
-  // GitHub Pages 部署配置
-  base: '/LegalRag/',
-  publicPath: '/LegalRag/',
-  history: { type: 'hash' },
-  exportStatic: {},
   antd: {},
   access: {},
   model: {},

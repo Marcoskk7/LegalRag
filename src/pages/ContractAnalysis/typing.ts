@@ -5,6 +5,8 @@ export interface HighlightRange {
 
 export interface Risk {
   id: string;
+  /** 后端返回的 identifier，用于精确查询单条风险 */
+  identifier: string;
   level: 'high' | 'medium' | 'low';
   title: string;
   content: string;
@@ -77,6 +79,12 @@ export interface ApiRisksResponse {
   data_inconsistent: boolean;
   status: 'success' | 'failed' | 'analyzing' | 'init';
   error?: string;
+}
+
+/** API 新增：GET /api/v1/documents/{uuid}/content 响应 */
+export interface ApiDocumentContentResponse {
+  uuid: string;
+  raw_content: string;
 }
 
 /** API 2: POST /api/v1/documents/{uuid}/risks/analyze 请求体 */
