@@ -1,27 +1,122 @@
-import React, { useState, useRef, useEffect } from 'react';
+import { PageContainer } from '@ant-design/pro-components';
+import { history, request, useSearchParams } from '@umijs/max';
 import {
-  message,
   Button,
-  Row,
-  Col,
   Card,
+  Col,
   List,
-  Tag,
+  message,
   Modal,
   Rate,
+  Row,
   Spin,
+  Tag,
 } from 'antd';
-import { PageContainer } from '@ant-design/pro-components';
-import { request, history, useSearchParams } from '@umijs/max';
-import type { AnalysisResult, Risk, Suggestion, LegalBasis, HighlightType } from './typing';
+import React, { useEffect, useRef, useState } from 'react';
 import './index.less';
+import type {
+  AnalysisResult,
+  ApiAnalyzeResponse,
+  ApiRisksResponse,
+  ApiStatusResponse,
+  HighlightType,
+  LegalBasis,
+  Risk,
+  Suggestion,
+} from './typing';
+
+// 后端 API 基础地址
+const API_BASE_URL = 'http://127.0.0.1:8080';
+
+/**
+ * 将后端 API 响应转换为前端数据结构
+ */
+const transformApiResponse = (apiData: ApiRisksResponse): AnalysisResult => {
+  const risks: Risk[] = [];
+  const legalBasis: LegalBasis[] = [];
+  const suggestions: Suggestion[] = [];
+
+  apiData.risks.forEach((apiRisk, index) => {
+    // 转换风险项
+    const riskId = `risk-${apiRisk.identifier}`;
+    
+    // 从 detected_issue 生成标题（取前20个字符或到第一个标点）
+    const issueText = apiRisk.detected_issue;
+    const titleMatch = issueText.match(/^(.{0,25})/);
+    const title = titleMatch ? titleMatch[1] + (issueText.length > 25 ? '...' : '') : '风险提示';
+
+    // 转换关联的法律依据
+    const riskLegalBasis: LegalBasis[] = apiRisk.legal_basis.map((legal, legalIndex) => ({
+      id: `legal-${apiRisk.identifier}-${legalIndex}`,
+      lawName: legal.law_name,
+      article: legal.order,
+      content: legal.content,
+      score: legal.relevance_score,
+      explanation: undefined,
+      relatedRange: apiRisk.highlight_range,
+    }));
+
+    // 添加到全局法律依据列表（去重）
+    riskLegalBasis.forEach(lb => {
+      if (!legalBasis.find(existing => existing.lawName === lb.lawName && existing.article === lb.article)) {
+        legalBasis.push(lb);
+      }
+    });
+
+    const risk: Risk = {
+      id: riskId,
+      level: apiRisk.level,
+      title,
+      content: apiRisk.detected_issue,
+      suggestion: apiRisk.suggestions,
+      highlightRange: apiRisk.highlight_range,
+      legalBasis: riskLegalBasis,
+    };
+
+    risks.push(risk);
+
+    // 如果有修改建议，也创建一个 Suggestion 项
+    if (apiRisk.suggestions) {
+      // 尝试从原文中截取相关文本作为"原文"
+      let originalText = '';
+      if (apiData.raw_content && apiRisk.highlight_range) {
+        const { start, end } = apiRisk.highlight_range;
+        if (start >= 0 && end <= apiData.raw_content.length) {
+          originalText = apiData.raw_content.substring(start, end);
+        }
+      }
+      
+      // 如果无法获取原文（或者太长），截取一部分或使用 detected_issue 作为 fallback
+      if (!originalText) {
+        originalText = issueText.substring(0, 50) + (issueText.length > 50 ? '...' : '');
+      } else if (originalText.length > 100) {
+        originalText = originalText.substring(0, 100) + '...';
+      }
+
+      suggestions.push({
+        id: `sug-${apiRisk.identifier}`,
+        original: originalText,
+        revised: apiRisk.suggestions,
+        reason: `针对风险：${title}`,
+        highlightRange: apiRisk.highlight_range,
+      });
+    }
+  });
+
+  return {
+    contractText: apiData.raw_content,
+    risks,
+    suggestions,
+    legalBasis,
+  };
+};
 
 const ContractAnalysis: React.FC = () => {
-  // 【修复 2】：使用 standard hook 获取 URL 参数
   const [searchParams] = useSearchParams();
   const fileId = searchParams.get('fileId');
 
   const [loading, setLoading] = useState(true);
+  const [analysisStatus, setAnalysisStatus] = useState<'init' | 'analyzing' | 'success' | 'failed'>('init');
   const [analysisResult, setAnalysisResult] = useState<AnalysisResult | null>(null);
   const [activeHighlight, setActiveHighlight] = useState<string>('');
   const [modalVisible, setModalVisible] = useState(false);
@@ -29,8 +124,9 @@ const ContractAnalysis: React.FC = () => {
   const [modalType, setModalType] = useState<'risk' | 'suggestion' | 'legal'>('risk');
 
   const contractTextRef = useRef<HTMLDivElement>(null);
+  const pollTimerRef = useRef<NodeJS.Timeout | null>(null);
 
-  // 页面加载时自动分析
+  // 页面加载时自动开始流程
   useEffect(() => {
     if (!fileId) {
       message.error('缺少文件ID，请重新上传');
@@ -38,32 +134,160 @@ const ContractAnalysis: React.FC = () => {
       return;
     }
 
-    handleAnalyze();
+    startProcess();
+
+    return () => {
+      if (pollTimerRef.current) {
+        clearTimeout(pollTimerRef.current);
+      }
+    };
   }, [fileId]);
 
-  // 执行分析
-  const handleAnalyze = async () => {
-    if (!fileId) return;
-
-    setLoading(true);
+  // API 3: 获取分析状态
+  const fetchStatus = async (): Promise<ApiStatusResponse | null> => {
     try {
-      const result = await request<{ success: boolean; data: AnalysisResult }>(
-        '/api/v1/analyze',
+      return await request<ApiStatusResponse>(
+        `${API_BASE_URL}/api/v1/documents/${fileId}/risks/status`,
+        { method: 'GET' }
+      );
+    } catch (error) {
+      console.error('Fetch status error:', error);
+      return null;
+    }
+  };
+
+  // API 1: 获取完整结果
+  const fetchRisks = async (): Promise<ApiRisksResponse | null> => {
+    try {
+      return await request<ApiRisksResponse>(
+        `${API_BASE_URL}/api/v1/documents/${fileId}/risks`,
+        { method: 'GET' }
+      );
+    } catch (error) {
+      console.error('Fetch risks error:', error);
+      return null;
+    }
+  };
+
+  // API 2: 触发分析
+  const triggerAnalysis = async (): Promise<ApiAnalyzeResponse | null> => {
+    try {
+      return await request<ApiAnalyzeResponse>(
+        `${API_BASE_URL}/api/v1/documents/${fileId}/risks/analyze`,
         {
           method: 'POST',
-          data: { fileId }
+          data: { top_k: 3 },
         }
       );
-
-      if (result.success) {
-        setAnalysisResult(result.data);
-        message.success('分析完成！');
-      }
     } catch (error) {
-      message.error('分析失败，请重试');
-    } finally {
-      setLoading(false);
+      console.error('Trigger analysis error:', error);
+      return null;
     }
+  };
+
+  // 启动流程：检查状态 -> 决定是否需要触发分析 -> 轮询或获取结果
+  const startProcess = async () => {
+    setLoading(true);
+    
+    // 尝试获取状态，允许一定的重试机制（解决后端数据库延迟问题）
+    let statusRes: ApiStatusResponse | null = null;
+    let retryCount = 0;
+    
+    while (retryCount < 3) {
+      statusRes = await fetchStatus();
+      if (statusRes) break;
+      // 如果获取失败（可能是404），等待1秒后重试
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      retryCount++;
+    }
+    
+    // 如果重试后依然失败，但我们有 fileId，尝试直接触发分析（可能是首次分析）
+    if (!statusRes) {
+      console.log('Status check failed, attempting to trigger analysis directly...');
+      await handleTriggerAnalysis();
+      return;
+    }
+
+    if (statusRes.status === 'success') {
+      // 已经分析完成，直接获取结果
+      setAnalysisStatus('success');
+      await loadResults();
+    } else if (statusRes.status === 'analyzing') {
+      // 正在分析，开始轮询
+      setAnalysisStatus('analyzing');
+      pollStatus();
+    } else {
+      // init 或 failed，触发新分析
+      await handleTriggerAnalysis();
+    }
+  };
+
+  const handleTriggerAnalysis = async () => {
+    setAnalysisStatus('analyzing');
+    // 同样，触发分析也可能因为数据库延迟而404，给予一次重试机会
+    let analyzeRes = await triggerAnalysis();
+    
+    if (!analyzeRes) {
+       console.log('First analysis trigger failed, retrying in 1s...');
+       await new Promise(resolve => setTimeout(resolve, 1000));
+       analyzeRes = await triggerAnalysis();
+    }
+
+    if (analyzeRes && analyzeRes.status === 'analyzing') {
+      message.info('开始智能分析...');
+      pollStatus();
+    } else {
+      setAnalysisStatus('failed');
+      setLoading(false);
+      // 如果是因为文档不存在导致的失败，给特定的提示
+      message.error('触发分析失败，可能是文档尚未准备好，请稍后重试');
+    }
+  };
+
+  // 轮询状态
+  const pollStatus = () => {
+    if (pollTimerRef.current) clearTimeout(pollTimerRef.current);
+    
+    pollTimerRef.current = setTimeout(async () => {
+      const statusRes = await fetchStatus();
+      if (!statusRes) {
+        // 网络错误等，暂停轮询或继续重试？这里选择继续重试
+        pollStatus();
+        return;
+      }
+
+      if (statusRes.status === 'success') {
+        setAnalysisStatus('success');
+        message.success('分析完成！');
+        await loadResults();
+      } else if (statusRes.status === 'failed') {
+        setAnalysisStatus('failed');
+        setLoading(false);
+        message.error(statusRes.error || '分析失败');
+      } else {
+        // init 或 analyzing，继续轮询
+        pollStatus();
+      }
+    }, 2000); // 2秒轮询一次
+  };
+
+  // 加载最终结果
+  const loadResults = async () => {
+    const risksRes = await fetchRisks();
+    if (risksRes && risksRes.status === 'success') {
+      const transformed = transformApiResponse(risksRes);
+      setAnalysisResult(transformed);
+    } else {
+      message.error('获取分析结果失败');
+    }
+    setLoading(false);
+  };
+
+  // 强制重新分析
+  const handleReanalyze = async () => {
+    if (!fileId) return;
+    setLoading(true);
+    await handleTriggerAnalysis();
   };
 
   // 返回上传页
@@ -73,7 +297,7 @@ const ContractAnalysis: React.FC = () => {
 
   // 渲染高亮文本
   const renderHighlightedText = () => {
-    if (!analysisResult) return null;
+    if (!analysisResult || !analysisResult.contractText) return <div className="text-gray-400 text-center py-10">暂无合同文本内容</div>;
 
     const { contractText, risks, suggestions, legalBasis } = analysisResult;
     const highlights: Array<{
@@ -112,6 +336,10 @@ const ContractAnalysis: React.FC = () => {
     let lastIndex = 0;
 
     highlights.forEach((highlight, index) => {
+      // 简单的越界检查
+      if (highlight.range.start < lastIndex) return; // 忽略重叠或乱序导致的错误范围
+      if (highlight.range.end > contractText.length) return;
+
       if (highlight.range.start > lastIndex) {
         result.push(
           <span key={`text-${index}`}>
@@ -283,155 +511,175 @@ const ContractAnalysis: React.FC = () => {
 
   if (loading) {
     return (
-      <div style={{
-        display: 'flex',
-        justifyContent: 'center',
-        alignItems: 'center',
-        minHeight: '100vh'
-      }}>
-        <Spin size="large" tip="正在分析合同..." />
+      <div className="min-h-screen bg-gradient-to-b from-slate-50 to-white flex items-center justify-center px-4">
+        <div className="w-full max-w-md rounded-2xl bg-white border border-slate-100 shadow-xl px-8 py-10 text-center space-y-4">
+          <div className="bg-gradient-to-r from-brand-600 to-blue-500 inline-flex items-center justify-center rounded-full px-4 py-1 text-xs font-medium text-white">
+            {analysisStatus === 'analyzing' ? '合同智能分析进行中…' : '正在准备分析...'}
+          </div>
+          <p className="text-sm text-slate-500">
+            我们正在为您解析合同条款并生成风险提示、修改意见与法律依据，请稍候。
+          </p>
+          <div className="flex justify-center pt-2">
+            <Spin size="large" tip={analysisStatus === 'analyzing' ? "正在分析合同..." : "正在加载..."} />
+          </div>
+        </div>
       </div>
     );
   }
 
   return (
-    <div className="contract-analysis">
-      <PageContainer
-        header={{
-          title: '合同分析结果',
-          onBack: handleBack,
-          extra: [
-            <Button key="reanalyze" onClick={handleAnalyze}>
-              重新分析
-            </Button>,
-          ],
-        }}
-      >
-
-        {analysisResult && (
-          <div className="analysis-content">
-            <Row gutter={24}>
-              {/* 左侧：合同文本 */}
-              <Col span={12}>
-                <Card title="合同文本" bordered={false}>
-                  <div className="contract-text-panel" ref={contractTextRef}>
-                    {renderHighlightedText()}
-                  </div>
-                </Card>
-              </Col>
-
-              {/* 右侧：分析结果 */}
-              <Col span={12}>
-                <div className="analysis-panel">
-                  {/* 风险提示 */}
-                  <div className="panel-section">
-                    <div className="section-title">🚨 风险提示</div>
-                    <List
-                      dataSource={analysisResult.risks}
-                      renderItem={(risk) => (
-                        <List.Item
-                          className="risk-item"
-                          onClick={() => {
-                            handleItemClick(risk.id);
-                            showRiskModal(risk);
-                          }}
-                        >
-                          <Card size="small" hoverable style={{ width: '100%' }}>
-                            <div>
-                              <Tag className={`risk-level ${risk.level}`}>
-                                {risk.level === 'high' ? '高' : risk.level === 'medium' ? '中' : '低'}
-                              </Tag>
-                              <span style={{ fontWeight: 600, marginLeft: 8 }}>
-                                {risk.title}
-                              </span>
-                            </div>
-                            <div style={{ marginTop: 8, color: '#666', fontSize: 12 }}>
-                              {risk.content}
-                            </div>
-                          </Card>
-                        </List.Item>
-                      )}
-                    />
-                  </div>
-
-                  {/* 修改意见 */}
-                  <div className="panel-section">
-                    <div className="section-title">✏️ 修改意见</div>
-                    <List
-                      dataSource={analysisResult.suggestions}
-                      renderItem={(suggestion) => (
-                        <List.Item
-                          className="suggestion-item"
-                          onClick={() => {
-                            handleItemClick(suggestion.id);
-                            showSuggestionModal(suggestion);
-                          }}
-                        >
-                          <Card size="small" hoverable style={{ width: '100%' }}>
-                            <div className="diff-text">
-                              <div style={{ marginBottom: 8 }}>
-                                <span style={{ color: '#999', fontSize: 12 }}>原文：</span>
-                                <span className="original">{suggestion.original}</span>
-                              </div>
-                              <div>
-                                <span style={{ color: '#999', fontSize: 12 }}>改为：</span>
-                                <span className="revised">{suggestion.revised}</span>
-                              </div>
-                            </div>
-                          </Card>
-                        </List.Item>
-                      )}
-                    />
-                  </div>
-
-                  {/* 法律依据 */}
-                  <div className="panel-section">
-                    <div className="section-title">⚖️ 法律依据</div>
-                    <List
-                      dataSource={analysisResult.legalBasis}
-                      renderItem={(legal) => (
-                        <List.Item
-                          className="legal-item"
-                          onClick={() => {
-                            handleItemClick(legal.id);
-                            showLegalModal(legal);
-                          }}
-                        >
-                          <Card size="small" hoverable style={{ width: '100%' }}>
-                            <div style={{ fontWeight: 600 }}>
-                              {legal.lawName} {legal.article}
-                            </div>
-                            <div style={{ margin: '8px 0', fontSize: 12, color: '#666' }}>
-                              {legal.content.substring(0, 50)}...
-                            </div>
-                            <div className="legal-score">
-                              <Rate disabled allowHalf value={legal.score * 5} style={{ fontSize: 12 }} />
-                              <span style={{ marginLeft: 8, fontSize: 12 }}>
-                                相关度: {(legal.score * 100).toFixed(0)}%
-                              </span>
-                            </div>
-                          </Card>
-                        </List.Item>
-                      )}
-                    />
-                  </div>
-                </div>
-              </Col>
-            </Row>
+    <div className="min-h-screen bg-gradient-to-b from-slate-50 to-white px-4 py-6">
+      <div className="mx-auto max-w-6xl rounded-2xl bg-white border border-slate-100 shadow-xl overflow-hidden">
+        {/* 顶部渐变说明条 */}
+        <div className="bg-gradient-to-r from-brand-600 to-blue-500 px-6 py-4 flex items-center justify-between">
+          <div>
+            <p className="text-xs font-semibold tracking-wide text-brand-50/80 uppercase">LegalRag</p>
+            <p className="text-sm text-brand-50">合同分析结果</p>
           </div>
-        )}
+          <span className="rounded-full border border-white/30 bg-white/10 px-3 py-1 text-xs text-brand-50">
+            风险提示 · 修改意见 · 法律依据
+          </span>
+        </div>
 
-        {/* 详情 Modal */}
-        <Modal
-          title={getModalTitle()}
-          open={modalVisible}
-          onCancel={() => setModalVisible(false)}
-          footer={null}
-          width={700}
-        >
-          {renderModalContent()}
-        </Modal>
-      </PageContainer>
+        {/* 浅色卡片主体 */}
+        <div className="contract-analysis px-4 pb-4 pt-2">
+          <PageContainer
+            header={{
+              title: '合同分析结果',
+              onBack: handleBack,
+              extra: [
+                <Button key="reanalyze" onClick={handleReanalyze}>
+                  重新分析
+                </Button>,
+              ],
+            }}
+          >
+            {analysisResult && (
+              <div className="analysis-content">
+                <Row gutter={24}>
+                  {/* 左侧：合同文本 */}
+                  <Col span={12}>
+                    <Card title="合同文本" bordered={false}>
+                      <div className="contract-text-panel" ref={contractTextRef}>
+                        {renderHighlightedText()}
+                      </div>
+                    </Card>
+                  </Col>
+
+                  {/* 右侧：分析结果 */}
+                  <Col span={12}>
+                    <div className="analysis-panel">
+                      {/* 风险提示 */}
+                      <div className="panel-section">
+                        <div className="section-title">🚨 风险提示</div>
+                        <List
+                          dataSource={analysisResult.risks}
+                          renderItem={(risk) => (
+                            <List.Item
+                              className="risk-item"
+                              onClick={() => {
+                                handleItemClick(risk.id);
+                                showRiskModal(risk);
+                              }}
+                            >
+                              <Card size="small" hoverable style={{ width: '100%' }}>
+                                <div>
+                                  <Tag className={`risk-level ${risk.level}`}>
+                                    {risk.level === 'high' ? '高' : risk.level === 'medium' ? '中' : '低'}
+                                  </Tag>
+                                  <span style={{ fontWeight: 600, marginLeft: 8 }}>
+                                    {risk.title}
+                                  </span>
+                                </div>
+                                <div style={{ marginTop: 8, color: '#666', fontSize: 12 }}>
+                                  {risk.content}
+                                </div>
+                              </Card>
+                            </List.Item>
+                          )}
+                        />
+                      </div>
+
+                      {/* 修改意见 */}
+                      <div className="panel-section">
+                        <div className="section-title">✏️ 修改意见</div>
+                        <List
+                          dataSource={analysisResult.suggestions}
+                          renderItem={(suggestion) => (
+                            <List.Item
+                              className="suggestion-item"
+                              onClick={() => {
+                                handleItemClick(suggestion.id);
+                                showSuggestionModal(suggestion);
+                              }}
+                            >
+                              <Card size="small" hoverable style={{ width: '100%' }}>
+                                <div className="diff-text">
+                                  <div style={{ marginBottom: 8 }}>
+                                    <span style={{ color: '#999', fontSize: 12 }}>原文：</span>
+                                    <span className="original">{suggestion.original}</span>
+                                  </div>
+                                  <div>
+                                    <span style={{ color: '#999', fontSize: 12 }}>改为：</span>
+                                    <span className="revised">{suggestion.revised}</span>
+                                  </div>
+                                </div>
+                              </Card>
+                            </List.Item>
+                          )}
+                        />
+                      </div>
+
+                      {/* 法律依据 */}
+                      <div className="panel-section">
+                        <div className="section-title">⚖️ 法律依据</div>
+                        <List
+                          dataSource={analysisResult.legalBasis}
+                          renderItem={(legal) => (
+                            <List.Item
+                              className="legal-item"
+                              onClick={() => {
+                                handleItemClick(legal.id);
+                                showLegalModal(legal);
+                              }}
+                            >
+                              <Card size="small" hoverable style={{ width: '100%' }}>
+                                <div style={{ fontWeight: 600 }}>
+                                  {legal.lawName} {legal.article}
+                                </div>
+                                <div style={{ margin: '8px 0', fontSize: 12, color: '#666' }}>
+                                  {legal.content.substring(0, 50)}...
+                                </div>
+                                <div className="legal-score">
+                                  <Rate disabled allowHalf value={legal.score * 5} style={{ fontSize: 12 }} />
+                                  <span style={{ marginLeft: 8, fontSize: 12 }}>
+                                    相关度: {(legal.score * 100).toFixed(0)}%
+                                  </span>
+                                </div>
+                              </Card>
+                            </List.Item>
+                          )}
+                        />
+                      </div>
+                    </div>
+                  </Col>
+                </Row>
+              </div>
+            )}
+
+            {/* 详情 Modal */}
+            <Modal
+              title={getModalTitle()}
+              open={modalVisible}
+              onCancel={() => setModalVisible(false)}
+              footer={null}
+              width={700}
+            >
+              {renderModalContent()}
+            </Modal>
+          </PageContainer>
+        </div>
+      </div>
     </div>
   );
 };
