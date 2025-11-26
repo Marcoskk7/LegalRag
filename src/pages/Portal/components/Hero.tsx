@@ -1,7 +1,12 @@
+import { history } from '@umijs/max';
 import { ArrowRight, CheckCircle, FileText, Search } from 'lucide-react';
 import React from 'react';
 
 export const Hero: React.FC = () => {
+  const handleGetStarted = () => {
+    history.push('/upload');
+  };
+
   return (
     <div className="relative pt-32 pb-20 lg:pt-40 lg:pb-28 overflow-hidden bg-gradient-to-b from-slate-50 to-white">
       {/* Background Decorative Blobs */}
@@ -27,8 +32,11 @@ export const Hero: React.FC = () => {
             </p>
 
             <div className="flex flex-col sm:flex-row items-center justify-center lg:justify-start space-y-3 sm:space-y-0 sm:space-x-4">
-              <button className="w-full sm:w-auto px-8 py-4 bg-brand-600 text-white rounded-xl font-semibold hover:bg-brand-700 transition-all shadow-lg shadow-brand-500/25 flex items-center justify-center group">
-                Start Free Trial
+              <button 
+                onClick={handleGetStarted}
+                className="w-full sm:w-auto px-8 py-4 bg-brand-600 text-white rounded-xl font-semibold hover:bg-brand-700 transition-all shadow-lg shadow-brand-500/25 flex items-center justify-center group"
+              >
+                Get Started
                 <ArrowRight className="ml-2 h-5 w-5 group-hover:translate-x-1 transition-transform" />
               </button>
               <button className="w-full sm:w-auto px-8 py-4 bg-white text-slate-700 border border-slate-200 rounded-xl font-semibold hover:bg-slate-50 transition-colors flex items-center justify-center">

@@ -1,0 +1,36 @@
+name: 测试打包
+on: push
+
+permissions:
+  contents: write
+
+jobs:
+  npm-build:
+   name: npm build工作
+   runs-on: ubuntu-latest
+
+   steps:
+    - name: 读取仓库
+      uses: actions/checkout@v4
+
+    - name: 安装 pnpm
+      uses: pnpm/action-setup@v4
+      with:
+       version: 9
+
+    - name: 设置 Node.js
+      uses: actions/setup-node@v4
+      with:
+       node-version: 20
+       cache: pnpm
+
+    - name: 安装依赖
+      run: |
+        pnpm install --frozen-lockfile
+        pnpm run build
+    
+    - name: 部署
+      uses: JamesIves/github-pages-deploy-action@v4
+      with:
+       branch: gh-pages
+       folder: dist

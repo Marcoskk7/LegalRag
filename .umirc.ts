@@ -12,12 +12,12 @@ export default defineConfig({
   routes: [
     {
       path: '/',
-      redirect: '/home',
+      redirect: '/portal',
     },
     {
-      name: '首页',
-      path: '/home',
-      component: './Home',
+      name: 'Portal',
+      path: '/portal',
+      component: './Portal',
     },
     {
       name: '权限演示',
@@ -33,12 +33,6 @@ export default defineConfig({
       name: '上传',
       path: '/upload',
       component: './Upload',
-    },
-    {
-      name: 'Portal',
-      path: '/portal',
-      component: './Portal',
-      layout: false,
     },
     {
       name:'分析',
