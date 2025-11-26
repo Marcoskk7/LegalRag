@@ -1,14 +1,11 @@
 import { defineConfig } from '@umijs/max';
 
-const repoName = 'LegalRag';
-const isProd = process.env.NODE_ENV === 'production';
-
 export default defineConfig({
-  base: isProd ? `/${repoName}/` : '/',
-  publicPath: isProd ? `/${repoName}/` : '/',
-  history: {
-    type: 'hash',
-  },
+  // GitHub Pages 部署配置
+  base: '/LegalRag/',
+  publicPath: '/LegalRag/',
+  history: { type: 'hash' },
+  exportStatic: {},
   antd: {},
   access: {},
   model: {},
