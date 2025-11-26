@@ -13,5 +13,6 @@ export const layout = () => {
     menu: {
       locale: false,
     },
+    defaultCollapsed: true,
   };
 };

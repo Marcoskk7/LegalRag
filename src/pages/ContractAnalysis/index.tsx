@@ -4,7 +4,6 @@ import {
   Button,
   Card,
   Col,
-  List,
   message,
   Modal,
   Rate,
@@ -422,11 +421,10 @@ const ContractAnalysis: React.FC = () => {
 
   // 处理高亮点击
   const handleHighlightClick = (type: HighlightType, id: string) => {
-    setActiveHighlight(id);
-
     if (type === 'risk') {
       const risk = analysisResult?.risks.find(r => r.id === id);
       if (risk) {
+        setActiveHighlight(id);
         // 点击正文高亮时，同步加载右侧风险详情
         fetchRiskDetail(risk.identifier).then(detail => {
           if (detail) {
@@ -436,31 +434,14 @@ const ContractAnalysis: React.FC = () => {
         showRiskModal(risk);
       }
     } else if (type === 'suggestion') {
+      setActiveHighlight(id);
       const suggestion = analysisResult?.suggestions.find(s => s.id === id);
       if (suggestion) showSuggestionModal(suggestion);
     } else if (type === 'legal') {
+      setActiveHighlight(id);
       const legal = analysisResult?.legalBasis.find(l => l.id === id);
       if (legal) showLegalModal(legal);
     }
-  };
-
-  // 处理右侧列表项点击
-  const handleItemClick = (id: string) => {
-    setActiveHighlight(id);
-    const element = document.getElementById(id);
-    if (element) {
-      element.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    }
-  };
-
-  // 处理风险列表点击：滚动到正文并加载右侧详情
-  const handleRiskClick = (risk: Risk) => {
-    handleItemClick(risk.id);
-    fetchRiskDetail(risk.identifier).then(detail => {
-      if (detail) {
-        setSelectedRiskDetail(detail);
-      }
-    });
   };
 
   // 显示风险详情
@@ -490,6 +471,8 @@ const ContractAnalysis: React.FC = () => {
 
     if (modalType === 'risk') {
       const risk = modalContent as Risk;
+      const legalBasisList = risk.legalBasis ?? [];
+      const hasLegalBasis = legalBasisList.length > 0;
       return (
         <div className="detail-modal">
           <div className="modal-section">
@@ -506,6 +489,29 @@ const ContractAnalysis: React.FC = () => {
             <div className="modal-section">
               <div className="section-label">建议措施</div>
               <div className="section-content">{risk.suggestion}</div>
+            </div>
+          )}
+          {hasLegalBasis && (
+            <div className="modal-section">
+              <div className="section-label">相关法律依据</div>
+              <div className="section-content">
+                {legalBasisList.map((lb) => (
+                  <div key={lb.id} style={{ marginBottom: 8 }}>
+                    <div style={{ fontWeight: 600 }}>
+                      {lb.lawName} {lb.article}
+                    </div>
+                    <div style={{ margin: '6px 0', fontSize: 12, color: '#666' }}>
+                      {lb.content}
+                    </div>
+                    <div className="legal-score">
+                      <Rate disabled allowHalf value={lb.score * 5} style={{ fontSize: 12 }} />
+                      <span style={{ marginLeft: 8, fontSize: 12 }}>
+                        相关度: {(lb.score * 100).toFixed(0)}%
+                      </span>
+                    </div>
+                  </div>
+                ))}
+              </div>
             </div>
           )}
         </div>
@@ -637,16 +643,26 @@ const ContractAnalysis: React.FC = () => {
                   <Col span={12}>
                     <div className="analysis-panel">
                       {/* 风险详情（调用按 identifier 查询单条风险接口） */}
-                      <Card title="风险详情" bordered={false} style={{ marginBottom: 16 }}>
+                      <Card title="风险详情" bordered={false} style={{ marginBottom: 16 }} bodyStyle={{ padding: '20px' }}>
                         {selectedRiskDetail ? (
-                          <div className="detail-modal">
-                            <div className="modal-section">
-                              <div className="section-label">风险标识符</div>
-                              <div className="section-content">{selectedRiskDetail.identifier}</div>
-                            </div>
-                            <div className="modal-section">
-                              <div className="section-label">风险等级</div>
-                              <Tag color={selectedRiskDetail.level === 'high' ? 'red' : selectedRiskDetail.level === 'medium' ? 'orange' : 'green'}>
+                          <div className="detail-container">
+                            <div className="modal-section" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
+                              <span style={{ fontSize: 16, fontWeight: 600 }}>风险等级</span>
+                              <Tag
+                                color={
+                                  selectedRiskDetail.level === 'high'
+                                    ? '#f5222d'
+                                    : selectedRiskDetail.level === 'medium'
+                                    ? '#fa8c16'
+                                    : '#52c41a'
+                                }
+                                style={{ 
+                                  padding: '4px 16px', 
+                                  fontSize: 14, 
+                                  borderRadius: 12,
+                                  marginRight: 0 
+                                }}
+                              >
                                 {selectedRiskDetail.level === 'high'
                                   ? '高风险'
                                   : selectedRiskDetail.level === 'medium'
@@ -654,134 +670,80 @@ const ContractAnalysis: React.FC = () => {
                                   : '低风险'}
                               </Tag>
                             </div>
-                            <div className="modal-section">
-                              <div className="section-label">风险描述</div>
-                              <div className="section-content">
+
+                            <Card 
+                              type="inner" 
+                              title={
+                                <span style={{ color: '#cf1322' }}>
+                                  🚨 风险描述
+                                </span>
+                              } 
+                              size="small" 
+                              style={{ marginBottom: 16, backgroundColor: '#fff1f0', borderColor: '#ffa39e' }}
+                            >
+                              <div style={{ lineHeight: '1.6', color: '#333' }}>
                                 {selectedRiskDetail.detected_issue}
                               </div>
-                            </div>
+                            </Card>
+
                             {selectedRiskDetail.suggestions && (
-                              <div className="modal-section">
-                                <div className="section-label">建议措施</div>
-                                <div className="section-content">
+                              <Card 
+                                type="inner" 
+                                title={
+                                  <span style={{ color: '#d48806' }}>
+                                    💡 建议措施
+                                  </span>
+                                } 
+                                size="small" 
+                                style={{ marginBottom: 16, backgroundColor: '#feffe6', borderColor: '#fffb8f' }}
+                              >
+                                <div style={{ lineHeight: '1.6', color: '#333' }}>
                                   {selectedRiskDetail.suggestions}
                                 </div>
-                              </div>
+                              </Card>
                             )}
-                            {selectedRiskDetail.legal_basis && selectedRiskDetail.legal_basis.length > 0 && (
-                              <div className="modal-section">
-                                <div className="section-label">相关法律依据</div>
-                                <div className="section-content">
-                                  {selectedRiskDetail.legal_basis.map((lb, idx) => (
-                                    <div key={idx} style={{ marginBottom: 8 }}>
-                                      <div style={{ fontWeight: 600 }}>
-                                        {lb.law_name} {lb.order}
-                                      </div>
-                                      <div style={{ fontSize: 12, color: '#666' }}>
-                                        {lb.content}
-                                      </div>
-                                    </div>
-                                  ))}
+
+                            {selectedRiskDetail.legal_basis &&
+                              selectedRiskDetail.legal_basis.length > 0 && (
+                                <div className="modal-section">
+                                  <div className="section-title" style={{ fontSize: 15, fontWeight: 600, marginBottom: 12, marginTop: 24 }}>
+                                    ⚖️ 相关法律依据
+                                  </div>
+                                  <div className="section-content">
+                                    {selectedRiskDetail.legal_basis.map((lb, idx) => (
+                                      <Card 
+                                        key={idx} 
+                                        size="small" 
+                                        hoverable 
+                                        className="legal-card"
+                                        style={{ marginBottom: 12, borderRadius: 6, borderLeft: '4px solid #1890ff' }}
+                                      >
+                                        <div style={{ fontWeight: 600, color: '#262626', marginBottom: 4 }}>
+                                          {lb.law_name} {lb.order}
+                                        </div>
+                                        <div style={{ fontSize: 13, color: '#666', marginBottom: 8, lineHeight: '1.5' }}>
+                                          {lb.content}
+                                        </div>
+                                        <div className="legal-score" style={{ display: 'flex', alignItems: 'center' }}>
+                                          <Rate disabled allowHalf value={(lb.relevance_score || 0) * 5} style={{ fontSize: 12 }} />
+                                          <span style={{ marginLeft: 8, fontSize: 12, color: '#8c8c8c' }}>
+                                            相关度: {((lb.relevance_score || 0) * 100).toFixed(0)}%
+                                          </span>
+                                        </div>
+                                      </Card>
+                                    ))}
+                                  </div>
                                 </div>
-                              </div>
-                            )}
+                              )}
                           </div>
                         ) : (
-                          <div className="text-gray-400 text-center py-6">
-                            暂无风险详情
+                          <div className="text-gray-400 text-center py-12">
+                            <div style={{ fontSize: 40, marginBottom: 16 }}>📋</div>
+                            <div>暂无风险详情</div>
+                            <div style={{ fontSize: 12, marginTop: 8 }}>点击左侧合同内容的标记处查看</div>
                           </div>
                         )}
                       </Card>
-
-                      {/* 风险提示列表 */}
-                      <div className="panel-section">
-                        <div className="section-title">🚨 风险提示</div>
-                        <List
-                          dataSource={analysisResult.risks}
-                          renderItem={(risk) => (
-                            <List.Item
-                              className="risk-item"
-                              onClick={() => handleRiskClick(risk)}
-                            >
-                              <Card size="small" hoverable style={{ width: '100%' }}>
-                                <div>
-                                  <Tag className={`risk-level ${risk.level}`}>
-                                    {risk.level === 'high' ? '高' : risk.level === 'medium' ? '中' : '低'}
-                                  </Tag>
-                                  <span style={{ fontWeight: 600, marginLeft: 8 }}>
-                                    {risk.title}
-                                  </span>
-                                </div>
-                                <div style={{ marginTop: 8, color: '#666', fontSize: 12 }}>
-                                  {risk.content}
-                                </div>
-                              </Card>
-                            </List.Item>
-                          )}
-                        />
-                      </div>
-
-                      {/* 修改意见 */}
-                      <div className="panel-section">
-                        <div className="section-title">✏️ 修改意见</div>
-                        <List
-                          dataSource={analysisResult.suggestions}
-                          renderItem={(suggestion) => (
-                            <List.Item
-                              className="suggestion-item"
-                              onClick={() => {
-                                handleItemClick(suggestion.id);
-                                showSuggestionModal(suggestion);
-                              }}
-                            >
-                              <Card size="small" hoverable style={{ width: '100%' }}>
-                                <div className="diff-text">
-                                  <div style={{ marginBottom: 8 }}>
-                                    <span style={{ color: '#999', fontSize: 12 }}>原文：</span>
-                                    <span className="original">{suggestion.original}</span>
-                                  </div>
-                                  <div>
-                                    <span style={{ color: '#999', fontSize: 12 }}>改为：</span>
-                                    <span className="revised">{suggestion.revised}</span>
-                                  </div>
-                                </div>
-                              </Card>
-                            </List.Item>
-                          )}
-                        />
-                      </div>
-
-                      {/* 法律依据 */}
-                      <div className="panel-section">
-                        <div className="section-title">⚖️ 法律依据</div>
-                        <List
-                          dataSource={analysisResult.legalBasis}
-                          renderItem={(legal) => (
-                            <List.Item
-                              className="legal-item"
-                              onClick={() => {
-                                handleItemClick(legal.id);
-                                showLegalModal(legal);
-                              }}
-                            >
-                              <Card size="small" hoverable style={{ width: '100%' }}>
-                                <div style={{ fontWeight: 600 }}>
-                                  {legal.lawName} {legal.article}
-                                </div>
-                                <div style={{ margin: '8px 0', fontSize: 12, color: '#666' }}>
-                                  {legal.content.substring(0, 50)}...
-                                </div>
-                                <div className="legal-score">
-                                  <Rate disabled allowHalf value={legal.score * 5} style={{ fontSize: 12 }} />
-                                  <span style={{ marginLeft: 8, fontSize: 12 }}>
-                                    相关度: {(legal.score * 100).toFixed(0)}%
-                                  </span>
-                                </div>
-                              </Card>
-                            </List.Item>
-                          )}
-                        />
-                      </div>
                     </div>
                   </Col>
                 </Row>
