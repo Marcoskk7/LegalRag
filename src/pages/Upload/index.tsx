@@ -16,7 +16,7 @@ const ContractUpload: React.FC = () => {
     multiple: false,
     showUploadList: true,
     maxCount: 1,
-    action:'http://localhost:8080/api/v1/upload',
+    action: 'http://api.legalrag.studio/api/v1/upload',
     // action: 'https://api.legalrag.studio/api/v1/upload',
     accept: '.pdf,.doc,.docx,.txt',
     onChange(info) {
@@ -45,7 +45,7 @@ const ContractUpload: React.FC = () => {
         'application/pdf',
         'application/msword',
         'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-        'text/plain'
+        'text/plain',
       ];
 
       if (!allowedTypes.includes(file.type)) {
@@ -70,10 +70,10 @@ const ContractUpload: React.FC = () => {
     }
 
     // 跳转并传递 fileId
-  //   history.push({
-  //     pathname: '/contract-analysis',
-  //     query: { fileId }
-  //   });
+    //   history.push({
+    //     pathname: '/contract-analysis',
+    //     query: { fileId }
+    //   });
     history.push(`/contract-analysis?fileId=${fileId}`);
   };
 
@@ -83,7 +83,9 @@ const ContractUpload: React.FC = () => {
         {/* 顶部渐变说明条 */}
         <div className="bg-gradient-to-r from-brand-600 to-blue-500 px-6 py-4 flex items-center justify-between">
           <div>
-            <p className="text-xs font-semibold tracking-wide text-brand-50/80 uppercase">LegalRag</p>
+            <p className="text-xs font-semibold tracking-wide text-brand-50/80 uppercase">
+              LegalRag
+            </p>
             <p className="text-sm text-brand-50">合同智能审查系统</p>
           </div>
           <span className="rounded-full border border-white/30 bg-white/10 px-3 py-1 text-xs text-brand-50">
@@ -94,7 +96,9 @@ const ContractUpload: React.FC = () => {
         {/* 浅色卡片主体 */}
         <div className="px-6 py-8">
           <div className="mb-8 text-center space-y-2">
-            <h1 className="text-2xl font-semibold text-slate-900">合同智能审查系统</h1>
+            <h1 className="text-2xl font-semibold text-slate-900">
+              合同智能审查系统
+            </h1>
             <p className="text-sm text-slate-500">
               上传合同文件，AI 为您进行风险识别和法律审查
             </p>
@@ -117,7 +121,9 @@ const ContractUpload: React.FC = () => {
             </Dragger>
 
             <div className="flex flex-col gap-3 text-xs md:text-sm text-slate-500 md:flex-row md:items-center md:justify-between">
-              <span>上传完成后，我们会自动为您生成风险列表、修改建议和适用法律条款。</span>
+              <span>
+                上传完成后，我们会自动为您生成风险列表、修改建议和适用法律条款。
+              </span>
               <Button
                 type="primary"
                 size="large"
