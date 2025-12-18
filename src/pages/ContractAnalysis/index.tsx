@@ -412,6 +412,7 @@ const ContractAnalysis: React.FC = () => {
       range: { start: number; end: number };
       type: HighlightType;
       id: string;
+      riskLevel?: Risk['level'];
     }> = [];
 
     risks.forEach((risk) => {
@@ -419,6 +420,7 @@ const ContractAnalysis: React.FC = () => {
         range: risk.highlightRange,
         type: 'risk',
         id: risk.id,
+        riskLevel: risk.level,
       });
     });
 
@@ -460,8 +462,10 @@ const ContractAnalysis: React.FC = () => {
         <mark
           key={`highlight-${highlight.id}`}
           className={`highlight ${highlight.type} ${
-            activeHighlight === highlight.id ? 'active' : ''
-          }`}
+            highlight.type === 'risk' && highlight.riskLevel
+              ? `risk-${highlight.riskLevel}`
+              : ''
+          } ${activeHighlight === highlight.id ? 'active' : ''}`}
           id={highlight.id}
           onClick={() => handleHighlightClick(highlight.type, highlight.id)}
         >

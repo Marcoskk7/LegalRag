@@ -30,8 +30,25 @@
         }
 
         &.risk {
+          // 默认风险高亮（兜底）
           background-color: #fff1f0;
           border-bottom: 2px solid #ff4d4f;
+        }
+
+        // 按风险等级区分颜色：高-红，中-黄，低-绿
+        &.risk-high {
+          background-color: #fff1f0;
+          border-bottom: 2px solid #ff4d4f;
+        }
+
+        &.risk-medium {
+          background-color: #fffbe6;
+          border-bottom: 2px solid #faad14;
+        }
+
+        &.risk-low {
+          background-color: #f6ffed;
+          border-bottom: 2px solid #52c41a;
         }
 
         &.suggestion {
@@ -69,7 +86,7 @@
 
           &:hover {
             border-left-color: #ff4d4f;
-            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 10%);
           }
 
           .risk-level {
@@ -95,12 +112,13 @@
           }
         }
 
-        .suggestion-item, .legal-item {
+        .suggestion-item,
+        .legal-item {
           cursor: pointer;
           transition: all 0.3s;
 
           &:hover {
-            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 10%);
           }
         }
 
