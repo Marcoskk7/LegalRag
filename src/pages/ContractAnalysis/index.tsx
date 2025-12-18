@@ -3,7 +3,22 @@
 
 import { PageContainer } from '@ant-design/pro-components';
 import { history, request, useSearchParams } from '@umijs/max';
-import { Button, Card, Col, message, Modal, Rate, Row, Spin, Tag } from 'antd';
+import {
+  Button,
+  Card,
+  Checkbox,
+  Col,
+  Divider,
+  message,
+  Modal,
+  Rate,
+  Row,
+  Space,
+  Spin,
+  Switch,
+  Tag,
+  Typography,
+} from 'antd';
 import React, { useEffect, useRef, useState } from 'react';
 import './index.less';
 import type {
@@ -21,6 +36,55 @@ import type {
 
 // 后端 API 基础地址
 const API_BASE_URL = 'http://api.legalrag.studio';
+
+type ExportSection = 'risks' | 'suggestions' | 'legal' | 'contract';
+
+const escapeHtml = (input: string) =>
+  input
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+
+const formatDateTime = (d: Date) => {
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(
+    d.getHours(),
+  )}:${pad(d.getMinutes())}`;
+};
+
+const buildHighlightedHtml = (
+  contractText: string,
+  highlights: Array<{
+    range: { start: number; end: number };
+    type: HighlightType;
+    id: string;
+  }>,
+) => {
+  // highlights 必须按 start 排序
+  const safeHighlights = [...highlights].sort(
+    (a, b) => a.range.start - b.range.start,
+  );
+
+  let html = '';
+  let lastIndex = 0;
+
+  for (const h of safeHighlights) {
+    if (h.range.start < lastIndex) continue;
+    if (h.range.start < 0 || h.range.end > contractText.length) continue;
+    if (h.range.end <= h.range.start) continue;
+
+    html += escapeHtml(contractText.substring(lastIndex, h.range.start));
+    html += `<mark class="hl ${h.type}">${escapeHtml(
+      contractText.substring(h.range.start, h.range.end),
+    )}</mark>`;
+    lastIndex = h.range.end;
+  }
+
+  html += escapeHtml(contractText.substring(lastIndex));
+  return html;
+};
 
 /**
  * 将后端 API 响应转换为前端数据结构
@@ -138,6 +202,13 @@ const ContractAnalysis: React.FC = () => {
   const [modalType, setModalType] = useState<'risk' | 'suggestion' | 'legal'>(
     'risk',
   );
+  const [exportModalOpen, setExportModalOpen] = useState(false);
+  const [exportSections, setExportSections] = useState<ExportSection[]>([
+    'risks',
+    'suggestions',
+    'contract',
+  ]);
+  const [exportIncludeHighlights, setExportIncludeHighlights] = useState(true);
   // 右侧风险详情（从新接口按 identifier 精确获取）
   const [selectedRiskDetail, setSelectedRiskDetail] = useState<ApiRisk | null>(
     null,
@@ -485,6 +556,302 @@ const ContractAnalysis: React.FC = () => {
     return result;
   };
 
+  const getPrintableContractText = () => {
+    // 优先使用结构化结果里的原文；否则降级用 documentContent
+    return analysisResult?.contractText || documentContent || '';
+  };
+
+  const collectHighlightsForExport = () => {
+    if (!analysisResult) return [];
+    const { risks, suggestions, legalBasis } = analysisResult;
+    const highlights: Array<{
+      range: { start: number; end: number };
+      type: HighlightType;
+      id: string;
+    }> = [];
+
+    // 导出时：高亮主要用于“定位风险/建议/法条”，和页面一致
+    risks.forEach((risk) => {
+      highlights.push({ range: risk.highlightRange, type: 'risk', id: risk.id });
+    });
+    suggestions.forEach((sug) => {
+      highlights.push({
+        range: sug.highlightRange,
+        type: 'suggestion',
+        id: sug.id,
+      });
+    });
+    legalBasis.forEach((legal) => {
+      highlights.push({
+        range: legal.relatedRange,
+        type: 'legal',
+        id: legal.id,
+      });
+    });
+    highlights.sort((a, b) => a.range.start - b.range.start);
+    return highlights;
+  };
+
+  const buildPrintHtml = () => {
+    const now = new Date();
+    const printableText = getPrintableContractText();
+    const sections = new Set(exportSections);
+    const includeContract = sections.has('contract');
+    const includeRisks = sections.has('risks');
+    const includeSuggestions = sections.has('suggestions');
+    const includeLegal = sections.has('legal');
+
+    const title = '合同分析结果（导出）';
+    const subtitle = `导出时间：${formatDateTime(now)}${
+      fileId ? ` · 文件ID：${escapeHtml(fileId)}` : ''
+    }`;
+
+    const risksHtml = includeRisks
+      ? (analysisResult?.risks ?? [])
+          .map((r) => {
+            const levelText =
+              r.level === 'high' ? '高风险' : r.level === 'medium' ? '中风险' : '低风险';
+            return `
+              <div class="item">
+                <div class="item-title">
+                  <span class="badge ${escapeHtml(r.level)}">${levelText}</span>
+                  <span class="item-head">${escapeHtml(r.title)}</span>
+                </div>
+                <div class="item-body">${escapeHtml(r.content)}</div>
+                ${
+                  r.suggestion
+                    ? `<div class="item-sub"><span class="muted">建议：</span>${escapeHtml(
+                        r.suggestion,
+                      )}</div>`
+                    : ''
+                }
+              </div>
+            `;
+          })
+          .join('')
+      : '';
+
+    const suggestionsHtml = includeSuggestions
+      ? (analysisResult?.suggestions ?? [])
+          .map((s) => {
+            return `
+              <div class="item">
+                <div class="item-title">
+                  <span class="badge info">修改建议</span>
+                  <span class="item-head">${escapeHtml(s.reason || '建议')}</span>
+                </div>
+                <div class="diff">
+                  <div class="diff-row">
+                    <div class="diff-label">原文</div>
+                    <div class="diff-content original">${escapeHtml(s.original)}</div>
+                  </div>
+                  <div class="diff-row">
+                    <div class="diff-label">修改为</div>
+                    <div class="diff-content revised">${escapeHtml(s.revised)}</div>
+                  </div>
+                </div>
+              </div>
+            `;
+          })
+          .join('')
+      : '';
+
+    const legalHtml = includeLegal
+      ? (analysisResult?.legalBasis ?? [])
+          .map((l) => {
+            return `
+              <div class="item">
+                <div class="item-title">
+                  <span class="badge legal">法律依据</span>
+                  <span class="item-head">${escapeHtml(l.lawName)} ${escapeHtml(
+              l.article,
+            )}</span>
+                </div>
+                <div class="item-body">${escapeHtml(l.content)}</div>
+                <div class="item-sub"><span class="muted">相关度：</span>${(
+                  l.score * 100
+                ).toFixed(0)}%</div>
+              </div>
+            `;
+          })
+          .join('')
+      : '';
+
+    const contractHtml = includeContract
+      ? exportIncludeHighlights && analysisResult
+        ? `<div class="contract-text"><div class="contract-pre">${buildHighlightedHtml(
+            printableText,
+            collectHighlightsForExport(),
+          ).replace(/\n/g, '<br/>')}</div></div>`
+        : `<div class="contract-text"><div class="contract-pre">${escapeHtml(
+            printableText,
+          ).replace(/\n/g, '<br/>')}</div></div>`
+      : '';
+
+    return `
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>${escapeHtml(title)}</title>
+    <style>
+      @page { margin: 16mm 14mm; }
+      body {
+        font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", Arial, sans-serif;
+        color: #111827;
+        line-height: 1.55;
+      }
+      .header { margin-bottom: 14px; }
+      .title { font-size: 18px; font-weight: 700; margin: 0 0 4px 0; }
+      .subtitle { font-size: 12px; color: #6b7280; margin: 0; }
+      .section { margin-top: 14px; }
+      .section-title { font-size: 13px; font-weight: 700; margin: 0 0 8px 0; }
+      .divider { height: 1px; background: #e5e7eb; margin: 10px 0; }
+      .item { border: 1px solid #e5e7eb; border-radius: 8px; padding: 10px 12px; margin: 10px 0; break-inside: avoid; }
+      .item-title { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+      .item-head { font-weight: 700; }
+      .item-body { font-size: 12px; color: #111827; }
+      .item-sub { font-size: 12px; color: #374151; margin-top: 6px; }
+      .muted { color: #6b7280; }
+      .badge { display: inline-block; font-size: 11px; padding: 2px 8px; border-radius: 999px; border: 1px solid #e5e7eb; background: #f9fafb; color: #111827; }
+      .badge.high { background: #fff1f2; border-color: #fecdd3; color: #9f1239; }
+      .badge.medium { background: #fff7ed; border-color: #fed7aa; color: #9a3412; }
+      .badge.low { background: #f0fdf4; border-color: #bbf7d0; color: #166534; }
+      .badge.info { background: #eff6ff; border-color: #bfdbfe; color: #1d4ed8; }
+      .badge.legal { background: #f5f3ff; border-color: #ddd6fe; color: #5b21b6; }
+      .diff { margin-top: 6px; }
+      .diff-row { display: flex; gap: 10px; margin-top: 6px; }
+      .diff-label { width: 52px; font-size: 12px; color: #6b7280; flex: 0 0 auto; }
+      .diff-content { font-size: 12px; padding: 8px 10px; border-radius: 6px; border: 1px solid #e5e7eb; width: 100%; }
+      .diff-content.original { background: #fff1f2; border-color: #fecdd3; }
+      .diff-content.revised { background: #f0fdf4; border-color: #bbf7d0; }
+      .contract-text { margin-top: 8px; }
+      .contract-pre { font-size: 12px; white-space: normal; word-break: break-word; }
+      mark.hl { padding: 0 2px; border-radius: 3px; }
+      mark.hl.risk { background: #ffe4e6; }
+      mark.hl.suggestion { background: #dbeafe; }
+      mark.hl.legal { background: #ede9fe; }
+      .print-hint { font-size: 12px; color: #6b7280; margin-top: 10px; }
+      .footer { position: fixed; bottom: 0; left: 0; right: 0; font-size: 10px; color: #9ca3af; }
+      .footer-inner { display: flex; justify-content: space-between; }
+      @media print {
+        .no-print { display: none !important; }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="header">
+      <div class="title">${escapeHtml(title)}</div>
+      <p class="subtitle">${subtitle}</p>
+      <div class="print-hint no-print">提示：在打印对话框中选择“保存为 PDF”即可导出。</div>
+      <div class="divider"></div>
+    </div>
+
+    ${
+      includeRisks
+        ? `<div class="section"><div class="section-title">风险摘要</div>${risksHtml || '<div class="muted">暂无风险</div>'}</div>`
+        : ''
+    }
+    ${
+      includeSuggestions
+        ? `<div class="section"><div class="section-title">修改建议</div>${suggestionsHtml || '<div class="muted">暂无修改建议</div>'}</div>`
+        : ''
+    }
+    ${
+      includeLegal
+        ? `<div class="section"><div class="section-title">法律依据</div>${legalHtml || '<div class="muted">暂无法律依据</div>'}</div>`
+        : ''
+    }
+    ${
+      includeContract
+        ? `<div class="section"><div class="section-title">合同正文</div>${contractHtml || '<div class="muted">暂无正文</div>'}</div>`
+        : ''
+    }
+
+    <div class="footer">
+      <div class="footer-inner">
+        <span>LegalRag</span>
+        <span>${formatDateTime(now)}</span>
+      </div>
+    </div>
+    <script>
+      // 尽量自动触发打印（用户仍可取消）
+      window.addEventListener('load', () => {
+        setTimeout(() => window.print(), 250);
+      });
+    </script>
+  </body>
+</html>
+    `.trim();
+  };
+
+  // 使用隐藏 iframe 打印，完全避免弹窗拦截问题
+  const handleExportWithIframe = () => {
+    const printableText = getPrintableContractText();
+    if (!printableText) {
+      message.error('暂无可导出的合同文本');
+      return;
+    }
+
+    const html = buildPrintHtml();
+
+    // 创建隐藏的 iframe
+    const iframe = document.createElement('iframe');
+    iframe.style.position = 'fixed';
+    iframe.style.right = '0';
+    iframe.style.bottom = '0';
+    iframe.style.width = '0';
+    iframe.style.height = '0';
+    iframe.style.border = 'none';
+    document.body.appendChild(iframe);
+
+    const iframeDoc = iframe.contentDocument || iframe.contentWindow?.document;
+    if (!iframeDoc) {
+      message.error('无法创建打印文档');
+      document.body.removeChild(iframe);
+      return;
+    }
+
+    iframeDoc.open();
+    iframeDoc.write(html);
+    iframeDoc.close();
+
+    // 等待内容加载完成后打印
+    iframe.onload = () => {
+      setTimeout(() => {
+        try {
+          iframe.contentWindow?.focus();
+          iframe.contentWindow?.print();
+        } catch (e) {
+          console.error('Print error:', e);
+          message.error('打印失败，请重试');
+        }
+        // 打印对话框关闭后移除 iframe
+        setTimeout(() => {
+          document.body.removeChild(iframe);
+        }, 1000);
+      }, 100);
+    };
+
+    // 兜底：如果 onload 没触发，也尝试打印
+    setTimeout(() => {
+      if (document.body.contains(iframe)) {
+        try {
+          iframe.contentWindow?.focus();
+          iframe.contentWindow?.print();
+        } catch (e) {
+          // ignore
+        }
+        setTimeout(() => {
+          if (document.body.contains(iframe)) {
+            document.body.removeChild(iframe);
+          }
+        }, 1000);
+      }
+    }, 500);
+  };
+
   // 渲染 Modal 内容
   const renderModalContent = () => {
     if (!modalContent) return null;
@@ -673,6 +1040,19 @@ const ContractAnalysis: React.FC = () => {
               title: '合同分析结果',
               onBack: handleBack,
               extra: [
+                <Button
+                  key="exportPdf"
+                  type="default"
+                  style={{
+                    background: '#ffffff',
+                    borderColor: '#d9d9d9',
+                    color: '#1677ff',
+                    fontWeight: 600,
+                  }}
+                  onClick={() => setExportModalOpen(true)}
+                >
+                  导出 PDF
+                </Button>,
                 <Button key="reanalyze" onClick={handleReanalyze}>
                   重新分析
                 </Button>,
@@ -893,6 +1273,61 @@ const ContractAnalysis: React.FC = () => {
               width={700}
             >
               {renderModalContent()}
+            </Modal>
+
+            {/* 导出 PDF 设置 */}
+            <Modal
+              title="导出 PDF"
+              open={exportModalOpen}
+              onCancel={() => setExportModalOpen(false)}
+              okText="开始导出"
+              cancelText="取消"
+              okButtonProps={{
+                style: {
+                  backgroundColor: '#fff',
+                  color: '#1677ff',
+                  border: '1px solid #d9d9d9',
+                },
+              }}
+              onOk={() => {
+                setExportModalOpen(false);
+                // 使用 iframe 打印，不会被浏览器拦截
+                handleExportWithIframe();
+              }}
+            >
+              <Typography.Paragraph style={{ marginBottom: 10, color: '#6b7280' }}>
+                点击"开始导出"后将自动弹出打印对话框，在对话框中选择"保存为 PDF"即可导出。
+              </Typography.Paragraph>
+              <Divider style={{ margin: '12px 0' }} />
+              <div style={{ marginBottom: 12 }}>
+                <div style={{ fontWeight: 600, marginBottom: 8 }}>导出内容</div>
+                <Checkbox.Group
+                  value={exportSections}
+                  onChange={(vals) => {
+                    const v = vals as ExportSection[];
+                    // 正文默认强制包含（防止用户误操作导致“空导出”）
+                    if (!v.includes('contract')) v.push('contract');
+                    setExportSections(Array.from(new Set(v)));
+                  }}
+                >
+                  <Space wrap>
+                    <Checkbox value="contract">合同正文</Checkbox>
+                    <Checkbox value="risks">风险摘要</Checkbox>
+                    <Checkbox value="suggestions">修改建议</Checkbox>
+                    <Checkbox value="legal">法律依据</Checkbox>
+                  </Space>
+                </Checkbox.Group>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <div style={{ fontWeight: 600 }}>正文包含高亮</div>
+                <Switch
+                  checked={exportIncludeHighlights}
+                  onChange={setExportIncludeHighlights}
+                />
+                <span style={{ color: '#6b7280', fontSize: 12 }}>
+                  风险/建议/法条会以不同底色标记
+                </span>
+              </div>
             </Modal>
           </PageContainer>
         </div>
