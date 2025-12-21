@@ -12,7 +12,7 @@ export interface Risk {
   content: string;
   suggestion?: string;
   highlightRange: HighlightRange;
-  legalBasis?: LegalBasis[];  // 关联的法律依据
+  legalBasis?: LegalBasis[]; // 关联的法律依据
 }
 
 export interface Suggestion {
@@ -34,7 +34,7 @@ export interface LegalBasis {
 }
 
 export interface AnalysisResult {
-  contractText?: string;  // 合同原文
+  contractText?: string; // 合同原文
   risks: Risk[];
   suggestions: Suggestion[];
   legalBasis: LegalBasis[];
@@ -53,7 +53,7 @@ export interface ApiHighlightRange {
 /** 后端返回的法律依据 */
 export interface ApiLegalBasis {
   law_name: string;
-  order: string;  // 条款编号，如 "第511条"
+  order: string; // 条款编号，如 "第511条"
   content: string;
   reference_link: string | null;
   relevance_score: number;
@@ -64,9 +64,21 @@ export interface ApiRisk {
   identifier: string;
   level: 'high' | 'medium' | 'low';
   highlight_range: ApiHighlightRange;
-  suggestions: string;  // 修改建议文本
+  suggestions: string; // 修改建议文本（通常是“建议措施”）
   legal_basis: ApiLegalBasis[];
-  detected_issue: string;  // 检测到的问题描述
+  detected_issue?: string | null; // 检测到的问题描述（后端可选）
+
+  /**
+   * 兼容后端新增：具体修改方案（字段名可能因版本不同而变化）
+   * - suggested_revision / revised_text: 建议替换后的文本
+   * - original_text: 建议替换前的原文片段（可选）
+   * - suggestion_reason: 修改理由（可选）
+   */
+  suggested_revision?: string;
+  revised_text?: string;
+  original_text?: string;
+  suggestion_reason?: string;
+  revision_rationale?: string;
 }
 
 /** API 1: GET /api/v1/documents/{uuid}/risks 响应 */

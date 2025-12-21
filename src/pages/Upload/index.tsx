@@ -1,7 +1,7 @@
 import { InboxOutlined } from '@ant-design/icons';
 import { history } from '@umijs/max';
-import type { UploadProps } from 'antd';
-import { Button, message, Upload } from 'antd';
+import type { UploadFile, UploadProps } from 'antd';
+import { Button, Input, message, Modal, Upload } from 'antd';
 import React, { useState } from 'react';
 import './index.less';
 
@@ -10,37 +10,48 @@ const { Dragger } = Upload;
 const ContractUpload: React.FC = () => {
   const [fileId, setFileId] = useState<string>('');
   const [uploading, setUploading] = useState(false);
+  const [fileList, setFileList] = useState<UploadFile[]>([]);
+  const [txtEditOpen, setTxtEditOpen] = useState(false);
+  const [txtEditValue, setTxtEditValue] = useState('');
+  const [pendingTxtFileName, setPendingTxtFileName] = useState<string>('');
+
+  const apiBaseUrl = (process.env.UMI_APP_API_BASE_URL as string) || '';
+  const uploadUrl = `${apiBaseUrl}/api/v1/upload`;
+
+  const doUpload = async (file: File) => {
+    const formData = new FormData();
+    formData.append('file', file);
+
+    const resp = await fetch(uploadUrl, {
+      method: 'POST',
+      body: formData,
+    });
+
+    if (!resp.ok) {
+      throw new Error(`HTTP ${resp.status}`);
+    }
+
+    return (await resp.json()) as any;
+  };
 
   const uploadProps: UploadProps = {
     name: 'file',
     multiple: false,
     showUploadList: true,
     maxCount: 1,
-    action: 'http://api.legalrag.studio/api/v1/upload',
-    // action: 'https://api.legalrag.studio/api/v1/upload',
+    fileList,
     accept: '.pdf,.doc,.docx,.txt',
     onChange(info) {
-      const { status } = info.file;
-
-      if (status === 'uploading') {
-        setUploading(true);
-      }
-
-      if (status === 'done') {
-        setUploading(false);
-        const response = info.file.response;
-        if (response?.success) {
-          message.success(`${info.file.name} 上传成功！`);
-          setFileId(response.data.uuid);
-        } else {
-          message.error(response?.message || '上传失败');
-        }
-      } else if (status === 'error') {
-        setUploading(false);
-        message.error(`${info.file.name} 上传失败`);
-      }
+      setFileList(info.fileList.slice(-1));
     },
-    beforeUpload(file) {
+    onRemove() {
+      setFileId('');
+      setTxtEditOpen(false);
+      setTxtEditValue('');
+      setPendingTxtFileName('');
+      return true;
+    },
+    beforeUpload: async (file) => {
       const allowedTypes = [
         'application/pdf',
         'application/msword',
@@ -58,8 +69,83 @@ const ContractUpload: React.FC = () => {
         return false;
       }
 
+      if (file.type === 'text/plain') {
+        try {
+          const text = await file.text();
+          setTxtEditValue(text);
+          setPendingTxtFileName(file.name);
+          setTxtEditOpen(true);
+          // 阻止自动上传，等待用户确认编辑内容后再上传
+          return false;
+        } catch {
+          message.error('读取 TXT 文件失败，请重试');
+          return false;
+        }
+      }
+
       return true;
     },
+    customRequest: async (options) => {
+      const { file, onError, onSuccess } = options;
+
+      try {
+        setUploading(true);
+        const res = await doUpload(file as File);
+        setUploading(false);
+
+        if (res?.success) {
+          message.success(`${(file as File).name} 上传成功！`);
+          setFileId(res.data.uuid);
+          onSuccess?.(res, file as any);
+        } else {
+          message.error(res?.message || '上传失败');
+          onError?.(new Error(res?.message || 'upload failed'));
+        }
+      } catch (e: any) {
+        setUploading(false);
+        message.error(`${(file as File).name} 上传失败`);
+        onError?.(e);
+      }
+    },
+  };
+
+  const handleUploadEditedTxt = async () => {
+    if (!pendingTxtFileName) {
+      message.warning('未检测到待编辑的 TXT 文件');
+      return;
+    }
+
+    try {
+      setUploading(true);
+
+      const editedFile = new File([txtEditValue], pendingTxtFileName, {
+        type: 'text/plain',
+      });
+
+      const res = await doUpload(editedFile);
+      setUploading(false);
+
+      if (res?.success) {
+        message.success(`${pendingTxtFileName} 上传成功！`);
+        setFileId(res.data.uuid);
+        setTxtEditOpen(false);
+
+        setFileList([
+          {
+            uid: `${Date.now()}`,
+            name: pendingTxtFileName,
+            status: 'done',
+            percent: 100,
+            response: res,
+          },
+        ]);
+      } else {
+        message.error(res?.message || '上传失败');
+      }
+    } catch (e) {
+      setUploading(false);
+      message.error('上传失败，请重试');
+    }
   };
 
   // 跳转到分析页
@@ -119,6 +205,35 @@ const ContractUpload: React.FC = () => {
                 支持 PDF、Word (doc/docx) 和 TXT 格式，单个文件不超过 50MB
               </p>
             </Dragger>
+
+            <Modal
+              title="编辑 TXT 内容"
+              open={txtEditOpen}
+              okText="保存并上传"
+              cancelText="取消"
+              confirmLoading={uploading}
+              onOk={handleUploadEditedTxt}
+              onCancel={() => {
+                setTxtEditOpen(false);
+                setTxtEditValue('');
+                setPendingTxtFileName('');
+                setFileList([]);
+                setFileId('');
+              }}
+              width={900}
+              destroyOnClose
+            >
+              <div className="space-y-3">
+                <div className="text-xs text-slate-500">
+                  仅对 TXT 文件支持在线修改；PDF/Word 请直接上传。
+                </div>
+                <Input.TextArea
+                  value={txtEditValue}
+                  onChange={(e) => setTxtEditValue(e.target.value)}
+                  autoSize={{ minRows: 16, maxRows: 28 }}
+                />
+              </div>
+            </Modal>
 
             <div className="flex flex-col gap-3 text-xs md:text-sm text-slate-500 md:flex-row md:items-center md:justify-between">
               <span>

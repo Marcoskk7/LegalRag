@@ -6,6 +6,14 @@ export default defineConfig({
   model: {},
   initialState: {},
   request: {},
+  proxy: {
+    // 开发环境：让前端通过同源 /api 访问本地后端，避免浏览器 CORS 问题
+    '/api': {
+      // 对齐本地后端 runserver.py 默认端口（你日志里是 0.0.0.0:8080）
+      target: 'http://localhost:8080',
+      changeOrigin: true,
+    },
+  },
   layout: {
     title: '@umijs/max',
   },

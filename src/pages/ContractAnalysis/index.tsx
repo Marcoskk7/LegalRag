@@ -7,12 +7,11 @@ import {
   Button,
   Card,
   Checkbox,
-  Col,
   Divider,
+  Input,
   message,
   Modal,
   Rate,
-  Row,
   Space,
   Spin,
   Switch,
@@ -35,7 +34,10 @@ import type {
 } from './typing';
 
 // 后端 API 基础地址
-const API_BASE_URL = 'http://api.legalrag.studio';
+// - 开发环境推荐使用 Umi proxy（见 .umirc.ts），此时这里保持空字符串即可走同源 /api。
+// - 如需直连某个后端（例如局域网 IP），可在运行前设置环境变量 UMI_APP_API_BASE_URL。
+const API_BASE_URL = (process.env.UMI_APP_API_BASE_URL as string) || '';
+const UPLOAD_URL = `${API_BASE_URL}/api/v1/upload`;
 
 type ExportSection = 'risks' | 'suggestions' | 'legal' | 'contract';
 
@@ -102,8 +104,8 @@ const transformApiResponse = (
     // 转换风险项
     const riskId = `risk-${apiRisk.identifier}`;
 
-    // 从 detected_issue 生成标题（取前20个字符或到第一个标点）
-    const issueText = apiRisk.detected_issue;
+    // 从 detected_issue 生成标题（取前25个字符）
+    const issueText = apiRisk.detected_issue || '';
     const titleMatch = issueText.match(/^(.{0,25})/);
     const title = titleMatch
       ? titleMatch[1] + (issueText.length > 25 ? '...' : '')
@@ -139,7 +141,7 @@ const transformApiResponse = (
       identifier: apiRisk.identifier,
       level: apiRisk.level,
       title,
-      content: apiRisk.detected_issue,
+      content: issueText,
       suggestion: apiRisk.suggestions,
       highlightRange: apiRisk.highlight_range,
       legalBasis: riskLegalBasis,
@@ -148,7 +150,18 @@ const transformApiResponse = (
     risks.push(risk);
 
     // 如果有修改建议，也创建一个 Suggestion 项
-    if (apiRisk.suggestions) {
+    // 兼容：后端可能把“建议措施”和“具体修改方案”拆为不同字段
+    const apiRevisionText =
+      (apiRisk as any)?.suggested_revision ?? (apiRisk as any)?.revised_text;
+    const apiOriginalText = (apiRisk as any)?.original_text as
+      | string
+      | undefined;
+    const apiReasonText =
+      ((apiRisk as any)?.revision_rationale as string | undefined) ??
+      ((apiRisk as any)?.suggestion_reason as string | undefined);
+
+    // 只在有“具体修改方案”时生成 Suggestion，避免用 suggestions 兜底导致两者一致
+    if (apiRevisionText) {
       // 尝试从原文中截取相关文本作为"原文"
       let originalText = '';
       if (sourceContent && apiRisk.highlight_range) {
@@ -156,6 +169,10 @@ const transformApiResponse = (
         if (start >= 0 && end <= sourceContent.length) {
           originalText = sourceContent.substring(start, end);
         }
+      }
+
+      if (apiOriginalText) {
+        originalText = apiOriginalText;
       }
 
       // 如果无法获取原文（或者太长），截取一部分或使用 detected_issue 作为 fallback
@@ -169,8 +186,8 @@ const transformApiResponse = (
       suggestions.push({
         id: `sug-${apiRisk.identifier}`,
         original: originalText,
-        revised: apiRisk.suggestions,
-        reason: `针对风险：${title}`,
+        revised: apiRevisionText,
+        reason: apiReasonText || `针对风险：${title}`,
         highlightRange: apiRisk.highlight_range,
       });
     }
@@ -182,6 +199,129 @@ const transformApiResponse = (
     suggestions,
     legalBasis,
   };
+};
+
+type SuggestionDecision = 'accepted' | 'rejected' | 'undecided';
+
+type AppliedEdit = {
+  suggestionId: string;
+  range: { start: number; end: number };
+};
+
+type BaseToEditedSegment =
+  | {
+      kind: 'copy';
+      baseStart: number;
+      baseEnd: number;
+      outStart: number;
+      outEnd: number;
+    }
+  | {
+      kind: 'replace';
+      suggestionId: string;
+      baseStart: number;
+      baseEnd: number;
+      outStart: number;
+      outEnd: number;
+    };
+
+/**
+ * 基于“原文 + 已采纳建议集合”，生成修改版正文。
+ * 说明：
+ * - 统一从 baseText 重新计算，避免多次替换导致 range 漂移。
+ * - 只对非重叠、合法 range 进行应用；重叠项将被跳过。
+ */
+const applyAcceptedSuggestions = (
+  baseText: string,
+  suggestions: Suggestion[],
+  decisions: Record<string, SuggestionDecision>,
+): {
+  text: string;
+  appliedEdits: AppliedEdit[];
+  skippedIds: string[];
+  segments: BaseToEditedSegment[];
+} => {
+  const accepted = (suggestions ?? []).filter(
+    (s) => decisions[s.id] === 'accepted',
+  );
+
+  const sorted = [...accepted]
+    .filter(
+      (s) =>
+        s?.highlightRange &&
+        Number.isFinite(s.highlightRange.start) &&
+        Number.isFinite(s.highlightRange.end) &&
+        s.highlightRange.end > s.highlightRange.start,
+    )
+    .sort((a, b) => a.highlightRange.start - b.highlightRange.start);
+
+  let out = '';
+  let lastIndex = 0;
+  const appliedEdits: AppliedEdit[] = [];
+  const skippedIds: string[] = [];
+  const segments: BaseToEditedSegment[] = [];
+  let lastAcceptedEnd = -1;
+
+  for (const s of sorted) {
+    const { start, end } = s.highlightRange;
+    if (start < 0 || end > baseText.length || end <= start) {
+      skippedIds.push(s.id);
+      continue;
+    }
+    // 简单处理：跳过与已采纳区间重叠的建议
+    if (start < lastAcceptedEnd) {
+      skippedIds.push(s.id);
+      continue;
+    }
+
+    if (start > lastIndex) {
+      const outStart = out.length;
+      out += baseText.slice(lastIndex, start);
+      const outEnd = out.length;
+      segments.push({
+        kind: 'copy',
+        baseStart: lastIndex,
+        baseEnd: start,
+        outStart,
+        outEnd,
+      });
+    }
+    const editStart = out.length;
+    const replacement = s.revised ?? '';
+    out += replacement;
+    const editEnd = out.length;
+
+    segments.push({
+      kind: 'replace',
+      suggestionId: s.id,
+      baseStart: start,
+      baseEnd: end,
+      outStart: editStart,
+      outEnd: editEnd,
+    });
+
+    appliedEdits.push({
+      suggestionId: s.id,
+      range: { start: editStart, end: editEnd },
+    });
+    lastIndex = end;
+    lastAcceptedEnd = end;
+  }
+
+  if (lastIndex < baseText.length) {
+    const outStart = out.length;
+    out += baseText.slice(lastIndex);
+    const outEnd = out.length;
+    segments.push({
+      kind: 'copy',
+      baseStart: lastIndex,
+      baseEnd: baseText.length,
+      outStart,
+      outEnd,
+    });
+  }
+
+  return { text: out, appliedEdits, skippedIds, segments };
 };
 
 const ContractAnalysis: React.FC = () => {
@@ -214,8 +354,79 @@ const ContractAnalysis: React.FC = () => {
     null,
   );
 
+  // 合同文本编辑（仅前端本地生效；如需重新分析，可上传为新文档）
+  const [editedContractText, setEditedContractText] = useState<string | null>(
+    null,
+  );
+  const [isEditingContract, setIsEditingContract] = useState(false);
+
+  // 逐条采纳/拒绝建议
+  const [suggestionDecisions, setSuggestionDecisions] = useState<
+    Record<string, SuggestionDecision>
+  >({});
+  const [appliedEdits, setAppliedEdits] = useState<AppliedEdit[]>([]);
+  const [baseToEditedSegments, setBaseToEditedSegments] = useState<
+    BaseToEditedSegment[]
+  >([]);
+
+  // 可拖拽调整左右区域宽度（持久化到 localStorage）
+  const splitContainerRef = useRef<HTMLDivElement>(null);
+  const splitStorageKey = 'contractAnalysis:leftPanePercent';
+  const clampNumber = (v: number, min: number, max: number) =>
+    Math.min(max, Math.max(min, v));
+  const [leftPanePercent, setLeftPanePercent] = useState<number>(() => {
+    try {
+      const raw = localStorage.getItem(splitStorageKey);
+      const n = raw ? Number(raw) : NaN;
+      if (Number.isFinite(n)) return clampNumber(n, 25, 75);
+    } catch {
+      // ignore
+    }
+    return 50;
+  });
+  const dragRef = useRef<{ dragging: boolean } | null>(null);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(splitStorageKey, String(leftPanePercent));
+    } catch {
+      // ignore
+    }
+  }, [leftPanePercent]);
+
   const contractTextRef = useRef<HTMLDivElement>(null);
   const pollTimerRef = useRef<NodeJS.Timeout | null>(null);
+
+  const handleResizerPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    // 仅处理鼠标左键拖拽（触摸/触控笔不区分 button）
+    if (e.pointerType === 'mouse' && e.button !== 0) return;
+
+    dragRef.current = { dragging: true };
+    try {
+      e.currentTarget.setPointerCapture(e.pointerId);
+    } catch {
+      // ignore
+    }
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+  };
+
+  const handleResizerPointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (!dragRef.current?.dragging) return;
+    const container = splitContainerRef.current;
+    if (!container) return;
+    const rect = container.getBoundingClientRect();
+    if (!rect.width) return;
+    const percent = ((e.clientX - rect.left) / rect.width) * 100;
+    setLeftPanePercent(clampNumber(percent, 25, 75));
+  };
+
+  const stopResizerDrag = () => {
+    if (!dragRef.current?.dragging) return;
+    dragRef.current = null;
+    document.body.style.cursor = '';
+    document.body.style.userSelect = '';
+  };
 
   // API 3: 获取分析状态
   const fetchStatus = async (): Promise<ApiStatusResponse | null> => {
@@ -399,6 +610,12 @@ const ContractAnalysis: React.FC = () => {
       return;
     }
 
+    // fileId 变化时，清空本地编辑状态
+    setEditedContractText(null);
+    setIsEditingContract(false);
+    setSuggestionDecisions({});
+    setAppliedEdits([]);
+
     startProcess();
 
     return () => {
@@ -478,7 +695,7 @@ const ContractAnalysis: React.FC = () => {
       );
     }
 
-    const { contractText, risks, suggestions, legalBasis } = analysisResult;
+    const { contractText, risks, legalBasis } = analysisResult;
     const highlights: Array<{
       range: { start: number; end: number };
       type: HighlightType;
@@ -495,13 +712,8 @@ const ContractAnalysis: React.FC = () => {
       });
     });
 
-    suggestions.forEach((sug) => {
-      highlights.push({
-        range: sug.highlightRange,
-        type: 'suggestion',
-        id: sug.id,
-      });
-    });
+    // 不额外渲染“修改建议”高亮：避免页面信息过载。
+    // 具体修改方案在用户点击风险高亮后的弹窗中选择采纳/不采纳。
 
     legalBasis.forEach((legal) => {
       highlights.push({
@@ -557,8 +769,363 @@ const ContractAnalysis: React.FC = () => {
   };
 
   const getPrintableContractText = () => {
-    // 优先使用结构化结果里的原文；否则降级用 documentContent
-    return analysisResult?.contractText || documentContent || '';
+    // 优先使用本地编辑后的正文；否则使用结构化原文；再降级用 documentContent
+    return (
+      editedContractText ??
+      (analysisResult?.contractText || documentContent || '')
+    );
+  };
+
+  const getBaseContractText = () =>
+    analysisResult?.contractText || documentContent || '';
+
+  const handleStartEdit = () => {
+    const base = getPrintableContractText();
+    if (!base) {
+      message.warning('暂无可编辑的合同文本');
+      return;
+    }
+    setEditedContractText(base);
+    setIsEditingContract(true);
+  };
+
+  const handleFinishEdit = () => {
+    setIsEditingContract(false);
+    message.success('已在页面中保存修改（未上传至服务器）');
+  };
+
+  const handleDiscardEdits = () => {
+    setEditedContractText(null);
+    setIsEditingContract(false);
+    setAppliedEdits([]);
+    setSuggestionDecisions({});
+    message.info('已撤销修改');
+  };
+
+  const getDecision = (id: string): SuggestionDecision =>
+    suggestionDecisions[id] ?? 'undecided';
+
+  const recomputeEditedFromDecisions = (
+    nextDecisions: Record<string, SuggestionDecision>,
+  ) => {
+    const base = getBaseContractText();
+    if (!analysisResult || !base) return;
+
+    const {
+      text,
+      appliedEdits: edits,
+      skippedIds,
+      segments,
+    } = applyAcceptedSuggestions(
+      base,
+      analysisResult.suggestions,
+      nextDecisions,
+    );
+
+    setEditedContractText(text);
+    setIsEditingContract(false);
+    setAppliedEdits(edits);
+    setBaseToEditedSegments(segments);
+
+    if (skippedIds.length) {
+      message.warning(`有 ${skippedIds.length} 条建议因范围重叠/异常未能应用`);
+    }
+  };
+
+  const updateDecision = (id: string, decision: SuggestionDecision) => {
+    if (!analysisResult) return;
+    if (isEditingContract) {
+      message.warning('请先点击“完成/撤销”退出手动编辑，再进行建议采纳');
+      return;
+    }
+
+    const next = { ...suggestionDecisions, [id]: decision };
+    setSuggestionDecisions(next);
+
+    // 只要存在至少一条“已采纳”，就生成修改版；否则回到原文展示
+    const hasAccepted = Object.values(next).some((v) => v === 'accepted');
+    if (!hasAccepted) {
+      setBaseToEditedSegments([]);
+      setEditedContractText(null);
+      setAppliedEdits([]);
+      return;
+    }
+
+    recomputeEditedFromDecisions(next);
+  };
+
+  const renderEditedTextWithAppliedHighlights = () => {
+    if (!editedContractText) return null;
+    // 没有结构化的“已采纳建议”范围时（例如手动编辑），做一个兜底高亮：从首次差异到末次差异
+    if (!appliedEdits.length) {
+      const base = getBaseContractText();
+      if (!base || base === editedContractText) {
+        return <pre className="whitespace-pre-wrap">{editedContractText}</pre>;
+      }
+
+      const minLen = Math.min(base.length, editedContractText.length);
+      let prefix = 0;
+      while (prefix < minLen && base[prefix] === editedContractText[prefix]) {
+        prefix += 1;
+      }
+
+      let suffix = 0;
+      while (
+        suffix < minLen - prefix &&
+        base[base.length - 1 - suffix] ===
+          editedContractText[editedContractText.length - 1 - suffix]
+      ) {
+        suffix += 1;
+      }
+
+      const start = prefix;
+      const end = editedContractText.length - suffix;
+      if (end <= start) {
+        return <pre className="whitespace-pre-wrap">{editedContractText}</pre>;
+      }
+
+      return (
+        <div className="whitespace-pre-wrap">
+          <span>{editedContractText.slice(0, start)}</span>
+          <mark className="highlight edit">
+            {editedContractText.slice(start, end)}
+          </mark>
+          <span>{editedContractText.slice(end)}</span>
+        </div>
+      );
+    }
+
+    const mapBaseIndexToEdited = (idx: number): number | null => {
+      for (const seg of baseToEditedSegments) {
+        if (idx < seg.baseStart || idx > seg.baseEnd) continue;
+        if (seg.kind !== 'copy') return null;
+        const offset = idx - seg.baseStart;
+        const mapped = seg.outStart + offset;
+        if (mapped < seg.outStart || mapped > seg.outEnd) return null;
+        return mapped;
+      }
+      return null;
+    };
+
+    const mapBaseRangeToEdited = (r: {
+      start: number;
+      end: number;
+    }): { start: number; end: number } | null => {
+      const start = mapBaseIndexToEdited(r.start);
+      const end = mapBaseIndexToEdited(r.end);
+      if (start === null || end === null) return null;
+      if (end <= start) return null;
+      return { start, end };
+    };
+
+    const overlap = (
+      a: { start: number; end: number },
+      b: { start: number; end: number },
+    ) => a.start < b.end && b.start < a.end;
+
+    const subtractRanges = (
+      baseRange: { start: number; end: number },
+      cuts: Array<{ start: number; end: number }>,
+    ): Array<{ start: number; end: number }> => {
+      const out: Array<{ start: number; end: number }> = [];
+      let cursor = baseRange.start;
+
+      for (const cut of cuts) {
+        if (cut.end <= cursor) continue;
+        if (cut.start >= baseRange.end) break;
+        if (!overlap({ start: cursor, end: baseRange.end }, cut)) continue;
+
+        const segEnd = Math.min(cut.start, baseRange.end);
+        if (segEnd > cursor) {
+          out.push({ start: cursor, end: segEnd });
+        }
+        cursor = Math.max(cursor, cut.end);
+        if (cursor >= baseRange.end) break;
+      }
+
+      if (cursor < baseRange.end) {
+        out.push({ start: cursor, end: baseRange.end });
+      }
+
+      return out.filter((r) => r.end > r.start);
+    };
+
+    const editRanges = [...appliedEdits]
+      .map((e) => e.range)
+      .filter((r) => r.end > r.start)
+      .sort((a, b) => a.start - b.start);
+
+    const highlights: Array<{
+      key: string;
+      range: { start: number; end: number };
+      type: HighlightType | 'edit';
+      id: string;
+      riskLevel?: Risk['level'];
+      suggestionId?: string;
+    }> = [];
+
+    // 绿色：已采纳建议
+    appliedEdits.forEach((e) => {
+      if (e.range.end <= e.range.start) return;
+      highlights.push({
+        key: `edit-${e.suggestionId}`,
+        range: e.range,
+        type: 'edit',
+        id: `edit-${e.suggestionId}`,
+        suggestionId: e.suggestionId,
+      });
+    });
+
+    // 红色风险 / 紫色法条：尽量映射到修改版正文里（不与已采纳区间重叠才显示，避免错位）
+    const risks = analysisResult?.risks ?? [];
+    const legalBasis = analysisResult?.legalBasis ?? [];
+
+    risks.forEach((risk) => {
+      const mapped = mapBaseRangeToEdited(risk.highlightRange);
+      if (!mapped) return;
+      const pieces = subtractRanges(mapped, editRanges);
+      pieces.forEach((piece, idx) => {
+        highlights.push({
+          key: `${risk.id}__${idx}`,
+          range: piece,
+          type: 'risk',
+          id: risk.id,
+          riskLevel: risk.level,
+        });
+      });
+    });
+
+    legalBasis.forEach((legal) => {
+      const mapped = mapBaseRangeToEdited(legal.relatedRange);
+      if (!mapped) return;
+      const pieces = subtractRanges(mapped, editRanges);
+      pieces.forEach((piece, idx) => {
+        highlights.push({
+          key: `${legal.id}__${idx}`,
+          range: piece,
+          type: 'legal',
+          id: legal.id,
+        });
+      });
+    });
+
+    highlights.sort((a, b) => {
+      if (a.range.start !== b.range.start) return a.range.start - b.range.start;
+      // 同起点时：优先渲染 edit
+      if (a.type === 'edit' && b.type !== 'edit') return -1;
+      if (b.type === 'edit' && a.type !== 'edit') return 1;
+      return a.range.end - b.range.end;
+    });
+
+    const nodes: React.ReactNode[] = [];
+    let last = 0;
+
+    for (let i = 0; i < highlights.length; i += 1) {
+      const h = highlights[i];
+      if (h.range.start < last) continue;
+      if (h.range.end > editedContractText.length) continue;
+
+      if (h.range.start > last) {
+        nodes.push(
+          <span key={`mix-text-${i}`}>
+            {editedContractText.slice(last, h.range.start)}
+          </span>,
+        );
+      }
+
+      if (h.type === 'edit') {
+        const suggestionId = h.suggestionId as string;
+        nodes.push(
+          <mark
+            key={`mix-edit-${suggestionId}`}
+            id={`edit-${suggestionId}`}
+            className={`highlight edit ${
+              activeHighlight === `edit-${suggestionId}` ? 'active' : ''
+            }`}
+            onClick={() => {
+              setActiveHighlight(`edit-${suggestionId}`);
+              const identifier = suggestionId.replace(/^sug-/, '');
+              const risk = analysisResult?.risks.find(
+                (r) => r.identifier === identifier,
+              );
+              if (risk) {
+                // 复用风险弹窗，允许在弹窗里单独取消/恢复该条修改
+                fetchRiskDetail(risk.identifier).then((detail) => {
+                  if (detail) setSelectedRiskDetail(detail);
+                });
+                showRiskModal(risk);
+              }
+            }}
+          >
+            {editedContractText.slice(h.range.start, h.range.end)}
+          </mark>,
+        );
+      } else {
+        nodes.push(
+          <mark
+            key={h.key}
+            className={`highlight ${h.type} ${
+              h.type === 'risk' && h.riskLevel ? `risk-${h.riskLevel}` : ''
+            } ${activeHighlight === h.id ? 'active' : ''}`}
+            id={h.id}
+            onClick={() => handleHighlightClick(h.type as HighlightType, h.id)}
+          >
+            {editedContractText.slice(h.range.start, h.range.end)}
+          </mark>,
+        );
+      }
+
+      last = h.range.end;
+    }
+
+    if (last < editedContractText.length) {
+      nodes.push(
+        <span key="mix-text-end">{editedContractText.slice(last)}</span>,
+      );
+    }
+
+    return <div className="whitespace-pre-wrap">{nodes}</div>;
+  };
+
+  const uploadEditedAndAnalyze = async () => {
+    const text = editedContractText;
+    if (!text) {
+      message.warning('请先编辑或应用建议');
+      return;
+    }
+
+    try {
+      setLoading(true);
+
+      const formData = new FormData();
+      const file = new File([text], `edited-${fileId || 'contract'}.txt`, {
+        type: 'text/plain',
+      });
+      formData.append('file', file);
+
+      const resp = await fetch(UPLOAD_URL, {
+        method: 'POST',
+        body: formData,
+      });
+
+      if (!resp.ok) {
+        throw new Error(`HTTP ${resp.status}`);
+      }
+
+      const json = (await resp.json()) as any;
+      if (json?.success && json?.data?.uuid) {
+        message.success('已上传修改版，开始重新分析');
+        history.push(`/contract-analysis?fileId=${json.data.uuid}`);
+        return;
+      }
+
+      setLoading(false);
+      message.error(json?.message || '上传失败');
+    } catch (e) {
+      console.error(e);
+      setLoading(false);
+      message.error('上传失败，请重试');
+    }
   };
 
   const collectHighlightsForExport = () => {
@@ -572,7 +1139,11 @@ const ContractAnalysis: React.FC = () => {
 
     // 导出时：高亮主要用于“定位风险/建议/法条”，和页面一致
     risks.forEach((risk) => {
-      highlights.push({ range: risk.highlightRange, type: 'risk', id: risk.id });
+      highlights.push({
+        range: risk.highlightRange,
+        type: 'risk',
+        id: risk.id,
+      });
     });
     suggestions.forEach((sug) => {
       highlights.push({
@@ -595,6 +1166,7 @@ const ContractAnalysis: React.FC = () => {
   const buildPrintHtml = () => {
     const now = new Date();
     const printableText = getPrintableContractText();
+    const canIncludeHighlights = exportIncludeHighlights && !editedContractText;
     const sections = new Set(exportSections);
     const includeContract = sections.has('contract');
     const includeRisks = sections.has('risks');
@@ -610,7 +1182,11 @@ const ContractAnalysis: React.FC = () => {
       ? (analysisResult?.risks ?? [])
           .map((r) => {
             const levelText =
-              r.level === 'high' ? '高风险' : r.level === 'medium' ? '中风险' : '低风险';
+              r.level === 'high'
+                ? '高风险'
+                : r.level === 'medium'
+                ? '中风险'
+                : '低风险';
             return `
               <div class="item">
                 <div class="item-title">
@@ -638,16 +1214,22 @@ const ContractAnalysis: React.FC = () => {
               <div class="item">
                 <div class="item-title">
                   <span class="badge info">修改建议</span>
-                  <span class="item-head">${escapeHtml(s.reason || '建议')}</span>
+                  <span class="item-head">${escapeHtml(
+                    s.reason || '建议',
+                  )}</span>
                 </div>
                 <div class="diff">
                   <div class="diff-row">
                     <div class="diff-label">原文</div>
-                    <div class="diff-content original">${escapeHtml(s.original)}</div>
+                    <div class="diff-content original">${escapeHtml(
+                      s.original,
+                    )}</div>
                   </div>
                   <div class="diff-row">
                     <div class="diff-label">修改为</div>
-                    <div class="diff-content revised">${escapeHtml(s.revised)}</div>
+                    <div class="diff-content revised">${escapeHtml(
+                      s.revised,
+                    )}</div>
                   </div>
                 </div>
               </div>
@@ -678,7 +1260,7 @@ const ContractAnalysis: React.FC = () => {
       : '';
 
     const contractHtml = includeContract
-      ? exportIncludeHighlights && analysisResult
+      ? canIncludeHighlights && analysisResult
         ? `<div class="contract-text"><div class="contract-pre">${buildHighlightedHtml(
             printableText,
             collectHighlightsForExport(),
@@ -750,22 +1332,30 @@ const ContractAnalysis: React.FC = () => {
 
     ${
       includeRisks
-        ? `<div class="section"><div class="section-title">风险摘要</div>${risksHtml || '<div class="muted">暂无风险</div>'}</div>`
+        ? `<div class="section"><div class="section-title">风险摘要</div>${
+            risksHtml || '<div class="muted">暂无风险</div>'
+          }</div>`
         : ''
     }
     ${
       includeSuggestions
-        ? `<div class="section"><div class="section-title">修改建议</div>${suggestionsHtml || '<div class="muted">暂无修改建议</div>'}</div>`
+        ? `<div class="section"><div class="section-title">修改建议</div>${
+            suggestionsHtml || '<div class="muted">暂无修改建议</div>'
+          }</div>`
         : ''
     }
     ${
       includeLegal
-        ? `<div class="section"><div class="section-title">法律依据</div>${legalHtml || '<div class="muted">暂无法律依据</div>'}</div>`
+        ? `<div class="section"><div class="section-title">法律依据</div>${
+            legalHtml || '<div class="muted">暂无法律依据</div>'
+          }</div>`
         : ''
     }
     ${
       includeContract
-        ? `<div class="section"><div class="section-title">合同正文</div>${contractHtml || '<div class="muted">暂无正文</div>'}</div>`
+        ? `<div class="section"><div class="section-title">合同正文</div>${
+            contractHtml || '<div class="muted">暂无正文</div>'
+          }</div>`
         : ''
     }
 
@@ -860,6 +1450,42 @@ const ContractAnalysis: React.FC = () => {
       const risk = modalContent as Risk;
       const legalBasisList = risk.legalBasis ?? [];
       const hasLegalBasis = legalBasisList.length > 0;
+
+      // 约定：每条风险（identifier）对应一条具体修改方案 sug-{identifier}
+      const suggestionId = `sug-${risk.identifier}`;
+      const fromList = analysisResult?.suggestions?.find(
+        (s) => s.id === suggestionId,
+      );
+
+      // 兜底：如果后端仅在 /risks/{identifier} 返回 suggested_revision，而 /risks 列表没有返回
+      const fromDetail =
+        selectedRiskDetail?.identifier === risk.identifier &&
+        (selectedRiskDetail as any)?.suggested_revision
+          ? {
+              id: suggestionId,
+              original: (() => {
+                const base = getBaseContractText();
+                const { start, end } = risk.highlightRange || {
+                  start: 0,
+                  end: 0,
+                };
+                if (!base) return '';
+                if (start >= 0 && end > start && end <= base.length) {
+                  return base.slice(start, end);
+                }
+                return '';
+              })(),
+              revised: (selectedRiskDetail as any).suggested_revision as string,
+              reason: `针对风险：${risk.title}`,
+              highlightRange: risk.highlightRange,
+            }
+          : null;
+
+      const revisionSuggestion = fromDetail ?? fromList;
+      const decision = revisionSuggestion
+        ? getDecision(revisionSuggestion.id)
+        : 'undecided';
+
       return (
         <div className="detail-modal">
           <div className="modal-section">
@@ -890,6 +1516,81 @@ const ContractAnalysis: React.FC = () => {
               <div className="section-content">{risk.suggestion}</div>
             </div>
           )}
+
+          {revisionSuggestion ? (
+            <div className="modal-section">
+              <div className="section-label">具体修改方案</div>
+              <div className="diff-display" style={{ marginBottom: 10 }}>
+                <div className="diff-row">
+                  <div className="diff-label">原文</div>
+                  <div className="diff-content original">
+                    {revisionSuggestion.original}
+                  </div>
+                </div>
+                <div className="diff-row">
+                  <div className="diff-label">修改为</div>
+                  <div className="diff-content revised">
+                    {revisionSuggestion.revised}
+                  </div>
+                </div>
+              </div>
+
+              <div
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 8,
+                  flexWrap: 'wrap',
+                }}
+              >
+                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                  <Button
+                    size="middle"
+                    className={
+                      decision === 'accepted'
+                        ? '!h-9 !rounded-lg !bg-brand-600 hover:!bg-brand-700 !text-white !border-brand-600'
+                        : '!h-9 !rounded-lg !bg-white hover:!bg-slate-50 !text-slate-700 !border-slate-200'
+                    }
+                    onClick={() => {
+                      updateDecision(
+                        revisionSuggestion.id,
+                        decision === 'accepted' ? 'undecided' : 'accepted',
+                      );
+                    }}
+                  >
+                    采纳
+                  </Button>
+
+                  <Button
+                    size="middle"
+                    className={
+                      decision === 'rejected'
+                        ? '!h-9 !rounded-lg !bg-slate-800 hover:!bg-slate-900 !text-white !border-slate-800'
+                        : '!h-9 !rounded-lg !bg-white hover:!bg-slate-50 !text-slate-700 !border-slate-200'
+                    }
+                    onClick={() => {
+                      updateDecision(
+                        revisionSuggestion.id,
+                        decision === 'rejected' ? 'undecided' : 'rejected',
+                      );
+                    }}
+                  >
+                    不采纳
+                  </Button>
+
+                  <Button
+                    size="middle"
+                    className="!h-9 !rounded-lg"
+                    onClick={() => {
+                      updateDecision(revisionSuggestion.id, 'undecided');
+                    }}
+                  >
+                    清除选择
+                  </Button>
+                </div>
+              </div>
+            </div>
+          ) : null}
           {hasLegalBasis && (
             <div className="modal-section">
               <div className="section-label">相关法律依据</div>
@@ -1019,7 +1720,7 @@ const ContractAnalysis: React.FC = () => {
 
   return (
     <div className="min-h-screen bg-gradient-to-b from-slate-50 to-white px-4 py-6">
-      <div className="mx-auto max-w-6xl rounded-2xl bg-white border border-slate-100 shadow-xl overflow-hidden">
+      <div className="mx-auto max-w-7xl rounded-2xl bg-white border border-slate-100 shadow-xl overflow-hidden">
         {/* 顶部渐变说明条 */}
         <div className="bg-gradient-to-r from-brand-600 to-blue-500 px-6 py-4 flex items-center justify-between">
           <div>
@@ -1061,21 +1762,106 @@ const ContractAnalysis: React.FC = () => {
           >
             {analysisResult && (
               <div className="analysis-content">
-                <Row gutter={24}>
-                  {/* 左侧：合同文本 */}
-                  <Col span={12}>
-                    <Card title="合同文本" bordered={false}>
+                <div
+                  className="split-grid"
+                  ref={splitContainerRef}
+                  style={{
+                    ['--left-pane' as any]: `${leftPanePercent}%`,
+                  }}
+                >
+                  {/* 左侧：合同文本/编辑区 */}
+                  <div className="split-left">
+                    <Card
+                      title="合同文本"
+                      bordered={false}
+                      extra={
+                        <Space>
+                          {!isEditingContract ? (
+                            <>
+                              <Button size="small" onClick={handleStartEdit}>
+                                编辑
+                              </Button>
+                              {editedContractText ? (
+                                <Button
+                                  size="small"
+                                  onClick={handleDiscardEdits}
+                                >
+                                  撤销修改版
+                                </Button>
+                              ) : null}
+                            </>
+                          ) : (
+                            <>
+                              <Button
+                                size="small"
+                                type="primary"
+                                onClick={handleFinishEdit}
+                              >
+                                完成
+                              </Button>
+                              <Button size="small" onClick={handleDiscardEdits}>
+                                撤销
+                              </Button>
+                            </>
+                          )}
+                          {editedContractText && !isEditingContract ? (
+                            <Button
+                              size="small"
+                              onClick={uploadEditedAndAnalyze}
+                            >
+                              用修改版重新分析
+                            </Button>
+                          ) : null}
+                        </Space>
+                      }
+                    >
                       <div
                         className="contract-text-panel"
                         ref={contractTextRef}
                       >
-                        {renderHighlightedText()}
+                        {isEditingContract ? (
+                          <div className="space-y-2">
+                            <div className="text-xs text-slate-500">
+                              提示：编辑/应用建议后，本页高亮定位将不再准确。
+                            </div>
+                            <Input.TextArea
+                              value={
+                                editedContractText ?? getPrintableContractText()
+                              }
+                              onChange={(e) =>
+                                setEditedContractText(e.target.value)
+                              }
+                              autoSize={{ minRows: 18, maxRows: 28 }}
+                            />
+                          </div>
+                        ) : editedContractText ? (
+                          <div className="space-y-2">
+                            <div className="text-xs text-slate-500">
+                              已生成修改版正文（绿色高亮为已采纳的修改内容）。
+                            </div>
+                            {renderEditedTextWithAppliedHighlights()}
+                          </div>
+                        ) : (
+                          renderHighlightedText()
+                        )}
                       </div>
                     </Card>
-                  </Col>
+                  </div>
+
+                  {/* 拖拽分隔条 */}
+                  <div
+                    className="split-resizer"
+                    role="separator"
+                    aria-orientation="vertical"
+                    aria-label="调整合同文本区域宽度"
+                    onPointerDown={handleResizerPointerDown}
+                    onPointerMove={handleResizerPointerMove}
+                    onPointerUp={stopResizerDrag}
+                    onPointerCancel={stopResizerDrag}
+                  />
 
                   {/* 右侧：分析结果 + 风险详情 */}
-                  <Col span={12}>
+                  <div className="split-right">
                     <div className="analysis-panel">
                       {/* 风险详情（调用按 identifier 查询单条风险接口） */}
                       <Card
@@ -1259,8 +2045,8 @@ const ContractAnalysis: React.FC = () => {
                         )}
                       </Card>
                     </div>
-                  </Col>
-                </Row>
+                  </div>
+                </div>
               </div>
             )}
 
@@ -1295,8 +2081,11 @@ const ContractAnalysis: React.FC = () => {
                 handleExportWithIframe();
               }}
             >
-              <Typography.Paragraph style={{ marginBottom: 10, color: '#6b7280' }}>
-                点击"开始导出"后将自动弹出打印对话框，在对话框中选择"保存为 PDF"即可导出。
+              <Typography.Paragraph
+                style={{ marginBottom: 10, color: '#6b7280' }}
+              >
+                点击“开始导出”后将自动弹出打印对话框，在对话框中选择“保存为
+                PDF”即可导出。
               </Typography.Paragraph>
               <Divider style={{ margin: '12px 0' }} />
               <div style={{ marginBottom: 12 }}>
@@ -1321,11 +2110,14 @@ const ContractAnalysis: React.FC = () => {
               <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                 <div style={{ fontWeight: 600 }}>正文包含高亮</div>
                 <Switch
-                  checked={exportIncludeHighlights}
+                  checked={editedContractText ? false : exportIncludeHighlights}
+                  disabled={Boolean(editedContractText)}
                   onChange={setExportIncludeHighlights}
                 />
                 <span style={{ color: '#6b7280', fontSize: 12 }}>
-                  风险/建议/法条会以不同底色标记
+                  {editedContractText
+                    ? '已修改正文：高亮会因位置偏移而失效'
+                    : '风险/建议/法条会以不同底色标记'}
                 </span>
               </div>
             </Modal>
