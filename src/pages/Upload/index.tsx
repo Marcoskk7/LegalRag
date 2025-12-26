@@ -15,7 +15,7 @@ const ContractUpload: React.FC = () => {
   const [txtEditValue, setTxtEditValue] = useState('');
   const [pendingTxtFileName, setPendingTxtFileName] = useState<string>('');
 
-  const apiBaseUrl = (process.env.UMI_APP_API_BASE_URL as string) || '';
+  const apiBaseUrl = 'http://api.legalrag.studio';
   const uploadUrl = `${apiBaseUrl}/api/v1/upload`;
 
   const doUpload = async (file: File) => {

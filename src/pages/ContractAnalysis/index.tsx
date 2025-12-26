@@ -36,7 +36,7 @@ import type {
 // 后端 API 基础地址
 // - 开发环境推荐使用 Umi proxy（见 .umirc.ts），此时这里保持空字符串即可走同源 /api。
 // - 如需直连某个后端（例如局域网 IP），可在运行前设置环境变量 UMI_APP_API_BASE_URL。
-const API_BASE_URL = (process.env.UMI_APP_API_BASE_URL as string) || '';
+const API_BASE_URL = 'http://api.legalrag.studio';
 const UPLOAD_URL = `${API_BASE_URL}/api/v1/upload`;
 
 type ExportSection = 'risks' | 'suggestions' | 'legal' | 'contract';
@@ -1365,12 +1365,6 @@ const ContractAnalysis: React.FC = () => {
         <span>${formatDateTime(now)}</span>
       </div>
     </div>
-    <script>
-      // 尽量自动触发打印（用户仍可取消）
-      window.addEventListener('load', () => {
-        setTimeout(() => window.print(), 250);
-      });
-    </script>
   </body>
 </html>
     `.trim();
@@ -1409,37 +1403,26 @@ const ContractAnalysis: React.FC = () => {
 
     // 等待内容加载完成后打印
     iframe.onload = () => {
+      // 延迟一点确保渲染完成
       setTimeout(() => {
         try {
-          iframe.contentWindow?.focus();
-          iframe.contentWindow?.print();
+          if (!iframe.contentWindow) return;
+          iframe.contentWindow.focus();
+          iframe.contentWindow.print();
         } catch (e) {
           console.error('Print error:', e);
           message.error('打印失败，请重试');
+        } finally {
+          // 打印对话框关闭后（无论成功还是取消）移除 iframe
+          // 增加一点延迟确保打印任务已提交
+          setTimeout(() => {
+            if (document.body.contains(iframe)) {
+              document.body.removeChild(iframe);
+            }
+          }, 1000);
         }
-        // 打印对话框关闭后移除 iframe
-        setTimeout(() => {
-          document.body.removeChild(iframe);
-        }, 1000);
-      }, 100);
+      }, 300);
     };
-
-    // 兜底：如果 onload 没触发，也尝试打印
-    setTimeout(() => {
-      if (document.body.contains(iframe)) {
-        try {
-          iframe.contentWindow?.focus();
-          iframe.contentWindow?.print();
-        } catch (e) {
-          // ignore
-        }
-        setTimeout(() => {
-          if (document.body.contains(iframe)) {
-            document.body.removeChild(iframe);
-          }
-        }, 1000);
-      }
-    }, 500);
   };
 
   // 渲染 Modal 内容
