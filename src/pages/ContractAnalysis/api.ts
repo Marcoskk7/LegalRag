@@ -7,7 +7,8 @@ import {
   ApiStatusResponse,
 } from './typing';
 
-const API_BASE_URL = 'http://api.legalrag.studio';
+// const API_BASE_URL = 'http://api.legalrag.studio';
+const API_BASE_URL = 'http://127.0.0.1:8080';
 const UPLOAD_URL = `${API_BASE_URL}/api/v1/upload`;
 
 export const fetchStatus = async (
@@ -72,17 +73,36 @@ export const fetchRiskDetail = async (
 
 export const triggerAnalysis = async (
   fileId: string,
+  topK: number = 1,
 ): Promise<ApiAnalyzeResponse | null> => {
   try {
     return await request<ApiAnalyzeResponse>(
       `${API_BASE_URL}/api/v1/documents/${fileId}/risks/analyze`,
       {
         method: 'POST',
-        data: { top_k: 1 },
+        data: { top_k: topK },
       },
     );
   } catch (error) {
     console.error('Trigger analysis error:', error);
+    return null;
+  }
+};
+
+/**
+ * 获取单条历史详情
+ * GET /api/v1/history/{uuid}
+ */
+export const fetchHistoryDetail = async (
+  uuid: string,
+): Promise<ApiRisksResponse | null> => {
+  try {
+    return await request<ApiRisksResponse>(
+      `${API_BASE_URL}/api/v1/history/${uuid}`,
+      { method: 'GET' },
+    );
+  } catch (error) {
+    console.error('Fetch history detail error:', error);
     return null;
   }
 };

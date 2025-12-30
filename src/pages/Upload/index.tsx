@@ -1,13 +1,20 @@
-import { InboxOutlined } from '@ant-design/icons';
+import { InboxOutlined, SettingOutlined, HistoryOutlined, UserOutlined } from '@ant-design/icons';
 import { history } from '@umijs/max';
 import type { UploadFile, UploadProps } from 'antd';
-import { Button, Input, Modal, Upload, message, Space } from 'antd';
-import React, { useState } from 'react';
+import { Button, Input, Modal, Upload, message, Space, InputNumber, Tooltip } from 'antd';
+import React, { useState, useEffect } from 'react';
 import { uploadFile } from './api';
 import './index.less';
 import UploadBackground from '@/components/UploadBackground';
 
 const { Dragger } = Upload;
+
+interface UploadHistoryItem {
+  id: string;
+  name: string;
+  time: number;
+  topK: number;
+}
 
 const ContractUpload: React.FC = () => {
   const [fileId, setFileId] = useState<string>('');
@@ -16,6 +23,7 @@ const ContractUpload: React.FC = () => {
   const [txtEditOpen, setTxtEditOpen] = useState(false);
   const [txtEditValue, setTxtEditValue] = useState('');
   const [pendingTxtFileName, setPendingTxtFileName] = useState<string>('');
+  const [topK, setTopK] = useState<number>(1);
 
   const uploadProps: UploadProps = {
     name: 'file',
@@ -138,36 +146,56 @@ const ContractUpload: React.FC = () => {
       return;
     }
 
-    history.push(`/contract-analysis?fileId=${fileId}`);
+    history.push(`/contract-analysis?fileId=${fileId}&topK=${topK}`);
   };
 
   return (
-    <div style={{ position: 'relative', width: '100vw', height: '100vh', minHeight: '100vh', background: '#09090b', overflow: 'hidden', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+    <div style={{ position: 'fixed', top: 0, left: 0, width: '100vw', height: '100vh', zIndex: 1, background: '#020617', overflow: 'hidden', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
       <UploadBackground />
       
       <div style={{ position: 'relative', zIndex: 1, padding: '24px', width: '100%', maxWidth: '800px' }}>
         <div className="sexy-card overflow-hidden">
           {/* 顶部说明条 */}
           <div className="px-6 py-4 flex items-center justify-between border-b border-white/10 bg-white/5">
-            <div>
-              <p className="text-xs font-semibold tracking-wide text-brand-200/80 uppercase">
-                LegalRag
-              </p>
-              <p className="text-sm text-brand-100 font-medium">合同智能审查系统</p>
+            <div className="flex items-center gap-4">
+              <div>
+                <p className="text-xs font-semibold tracking-[0.3em] text-[#C5A059] uppercase font-mono opacity-90">
+                  Quantum.System
+                </p>
+                <p className="text-sm text-brand-100 font-medium opacity-60">Contract Analysis Interface</p>
+              </div>
+              <div className="h-8 w-[1px] bg-white/10" />
+              <div className="flex items-center gap-2 text-white/40">
+                <UserOutlined className="text-[#C5A059]" />
+                <span className="text-xs font-mono uppercase tracking-widest">Guest_User_01</span>
+              </div>
             </div>
-            <span className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs text-brand-50 backdrop-blur-md">
-              上传 · 分析 · 风险评估
-            </span>
+            <div className="flex items-center gap-3">
+              <Button 
+                ghost 
+                icon={<HistoryOutlined />} 
+                onClick={() => history.push('/history')}
+                className="!border-white/10 !text-white/60 hover:!text-[#C5A059] hover:!border-[#C5A059]/50 !rounded-full !bg-white/5"
+              >
+                历史记录
+              </Button>
+              <span className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs text-brand-50 backdrop-blur-md font-mono tracking-widest uppercase opacity-70">
+                Active
+              </span>
+            </div>
           </div>
 
           {/* 主体内容 */}
           <div className="px-8 py-10">
-            <div className="mb-10 text-center space-y-3">
-              <h1 className="text-3xl font-bold text-white tracking-tight">
-                上传您的合同
+            <div className="mb-10 text-left space-y-3">
+               <span className="font-mono text-[#C5A059] text-xs font-medium tracking-[0.5em] block uppercase mb-2">
+                 Luminescent Trajectories
+               </span>
+              <h1 className="text-5xl md:text-7xl font-extrabold text-white tracking-tighter leading-[0.9] bg-gradient-to-r from-white via-slate-400 to-[#C5A059] bg-clip-text text-transparent">
+                Legal<br/>Rag
               </h1>
-              <p className="text-slate-400 max-w-md mx-auto">
-                支持多种文档格式，AI 将自动为您识别潜在法律风险并提供专业修改建议。
+              <p className="text-slate-400 max-w-lg text-lg font-light leading-relaxed mt-4">
+                Upload your document to initiate <span className="text-white">stochastic risk analysis</span>. High-fidelity processing active.
               </p>
             </div>
 
@@ -189,25 +217,53 @@ const ContractUpload: React.FC = () => {
                 </Dragger>
               </div>
 
+              {/* 召回条数设置 */}
+              <div className="flex items-center gap-4 p-4 rounded-xl bg-white/5 border border-white/10">
+                <div className="flex items-center gap-2 text-slate-300">
+                  <SettingOutlined className="text-[#C5A059]" />
+                  <span className="text-sm font-medium">分析配置</span>
+                </div>
+                <div className="h-4 w-[1px] bg-white/10 mx-2" />
+                <div className="flex items-center gap-3">
+                  <span className="text-xs text-slate-400 uppercase tracking-wider">Recall Count</span>
+                  <Tooltip title="选择召回的法律条数，条数越多分析越全面但耗时更长">
+                    <InputNumber
+                      min={1}
+                      max={10}
+                      value={topK}
+                      onChange={(val) => setTopK(val || 1)}
+                      className="!bg-black/40 !border-white/10 !text-white !rounded-lg !w-20"
+                    />
+                  </Tooltip>
+                </div>
+              </div>
+
               <div className="flex flex-col gap-6 md:flex-row md:items-center md:justify-between pt-4 border-t border-white/5">
                 <div className="flex-1">
-                  <p className="text-sm text-slate-400 leading-relaxed">
-                    上传完成后，点击下方按钮开始智能分析。
-                  </p>
+                   <div className="flex gap-8 font-mono text-[10px] tracking-widest uppercase opacity-60">
+                      <div className="flex flex-col gap-1">
+                          <span className="opacity-40">Latency</span>
+                          <span className="text-[#C5A059]">0.02ms</span>
+                      </div>
+                      <div className="flex flex-col gap-1">
+                          <span className="opacity-40">Entropy</span>
+                          <span className="text-[#C5A059]">84.2%</span>
+                      </div>
+                   </div>
                 </div>
                 <Button
                   type="primary"
                   size="large"
                   disabled={!fileId || uploading}
                   loading={uploading}
-                  className={`!h-12 !px-8 !rounded-xl !text-lg !font-semibold transition-all ${
+                  className={`!h-12 !px-8 !rounded-full !text-xs !tracking-widest !uppercase !font-bold transition-all ${
                     fileId 
-                      ? '!bg-brand-600 hover:!bg-brand-500 hover:!scale-105 shadow-lg shadow-brand-600/20' 
-                      : '!bg-slate-800 !text-slate-500 !border-none'
+                      ? '!bg-[#C5A059] !text-black hover:!bg-white hover:!scale-105' 
+                      : '!bg-white/5 !text-white/40 !border border-white/10'
                   }`}
                   onClick={handleStartAnalysis}
                 >
-                  开始智能分析
+                  Initiate Flux
                 </Button>
               </div>
             </div>

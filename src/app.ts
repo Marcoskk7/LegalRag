@@ -15,9 +15,11 @@ export const layout = () => {
     },
     defaultCollapsed: true,
     navTheme: 'realDark',
-    layout: 'mix',
+    layout: 'side',
     splitMenus: false,
     colorPrimary: '#3b82f6',
-    siderMenuType: 'group',
+    siderMenuType: 'sub',
+    headerRender: false,
+    menuHeaderRender: undefined,
   };
 };

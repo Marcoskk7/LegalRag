@@ -1,6 +1,7 @@
 import { UploadResponse } from './typing';
 
-const API_BASE_URL = 'http://api.legalrag.studio';
+// const API_BASE_URL = 'http://api.legalrag.studio';
+const API_BASE_URL = 'http://127.0.0.1:8080';
 const UPLOAD_URL = `${API_BASE_URL}/api/v1/upload`;
 
 export const uploadFile = async (file: File): Promise<UploadResponse> => {

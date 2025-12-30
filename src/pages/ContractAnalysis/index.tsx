@@ -1,7 +1,7 @@
 /* eslint-disable @typescript-eslint/no-use-before-define */
 /* eslint-disable no-promise-executor-return */
 
-import DottedGlowBackground from '@/components/DottedGlowBackground';
+import UploadBackground from '@/components/UploadBackground';
 import { history, useSearchParams } from '@umijs/max';
 import {
   Button,
@@ -21,6 +21,7 @@ import {
 import React, { useEffect, useRef, useState } from 'react';
 import {
   fetchDocumentContent,
+  fetchHistoryDetail,
   fetchRiskDetail,
   fetchRisks,
   fetchStatus,
@@ -51,6 +52,9 @@ import {
 const ContractAnalysis: React.FC = () => {
   const [searchParams] = useSearchParams();
   const fileId = searchParams.get('fileId');
+  const topKParam = searchParams.get('topK');
+  const fromHistory = searchParams.get('fromHistory') === 'true';
+  const topK = topKParam ? parseInt(topKParam, 10) : 1;
 
   const [loading, setLoading] = useState(true);
   const [analysisStatus, setAnalysisStatus] = useState<
@@ -227,14 +231,14 @@ const ContractAnalysis: React.FC = () => {
     if (!fileId) return;
     setAnalysisStatus('analyzing');
     // 同样，触发分析也可能因为数据库延迟而404，给予一次重试机会
-    let analyzeRes = await triggerAnalysis(fileId);
+    let analyzeRes = await triggerAnalysis(fileId, topK);
 
     if (!analyzeRes) {
       console.log('First analysis trigger failed, retrying in 1s...');
       await new Promise<void>((resolve) => {
         setTimeout(resolve, 1000);
       });
-      analyzeRes = await triggerAnalysis(fileId);
+      analyzeRes = await triggerAnalysis(fileId, topK);
     }
 
     if (analyzeRes && analyzeRes.status === 'analyzing') {
@@ -251,6 +255,27 @@ const ContractAnalysis: React.FC = () => {
   // 启动流程：直接触发分析 -> 轮询状态
   const startProcess = async () => {
     setLoading(true);
+
+    if (fromHistory && fileId) {
+      const historyRes = await fetchHistoryDetail(fileId);
+      if (historyRes && historyRes.status === 'success') {
+        setAnalysisStatus('success');
+        
+        let content = historyRes.raw_content || '';
+        if (!content) {
+          const contentRes = await fetchDocumentContent(fileId);
+          if (contentRes?.raw_content) {
+            content = contentRes.raw_content;
+          }
+        }
+        
+        setDocumentContent(content);
+        const transformed = transformApiResponse(historyRes, content);
+        setAnalysisResult(transformed);
+        setLoading(false);
+        return;
+      }
+    }
 
     // 直接触发分析（对于新上传的文档，避免先GET状态导致404）
     await handleTriggerAnalysis();
@@ -1325,13 +1350,13 @@ const ContractAnalysis: React.FC = () => {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-black flex items-center justify-center px-4">
-        <DottedGlowBackground />
+      <div className="min-h-screen bg-[#020617] flex items-center justify-center px-4" style={{ position: 'fixed', top: 0, left: 0, width: '100%', height: '100%', zIndex: 10 }}>
+        <UploadBackground />
         <div className="relative z-10 w-full max-w-md rounded-2xl bg-white/5 border border-white/10 shadow-2xl px-8 py-10 text-center space-y-4 backdrop-blur-xl">
           <div className="bg-brand-600/20 border border-brand-500/30 inline-flex items-center justify-center rounded-full px-4 py-1 text-xs font-medium text-brand-300">
             {analysisStatus === 'analyzing'
-              ? '合同智能分析进行中…'
-              : '正在准备分析...'}
+              ? 'Quantum Flux Processing...'
+              : 'Initializing System...'}
           </div>
           <p className="text-sm text-slate-400">
             我们正在为您解析合同条款并生成风险提示、修改意见与法律依据，请稍候。
@@ -1354,10 +1379,10 @@ const ContractAnalysis: React.FC = () => {
   }
 
   return (
-    <div style={{ position: 'relative', width: '100vw', minHeight: '100vh', background: '#09090b', overflowX: 'hidden' }}>
-      <DottedGlowBackground />
+    <div style={{ position: 'fixed', top: 0, left: 0, width: '100vw', height: '100vh', background: '#020617', overflow: 'hidden', zIndex: 1 }}>
+      <UploadBackground />
       
-      <div style={{ position: 'relative', zIndex: 1, padding: '24px 24px 48px' }}>
+      <div style={{ position: 'relative', zIndex: 1, padding: '24px 24px 48px', height: '100%', overflowX: 'hidden', overflowY: 'auto' }}>
         <div className="mx-auto max-w-7xl">
           {/* 顶部渐变说明条 - 改为更通透的设计 */}
           <div className="sexy-card mb-6 px-6 py-4 flex items-center justify-between">
@@ -1371,6 +1396,14 @@ const ContractAnalysis: React.FC = () => {
                 <span className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs text-brand-100 backdrop-blur-md">
                   风险提示 · 修改意见 · 法律依据
                 </span>
+                <Button 
+                  ghost 
+                  size="small" 
+                  onClick={() => history.push('/history')}
+                  style={{ color: 'rgba(255,255,255,0.8)', borderColor: 'rgba(255,255,255,0.3)' }}
+                >
+                  历史
+                </Button>
                 <Button 
                   ghost 
                   size="small" 

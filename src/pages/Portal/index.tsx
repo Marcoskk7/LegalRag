@@ -1,4 +1,4 @@
-import DottedGlowBackground from '@/components/DottedGlowBackground';
+import UploadBackground from '@/components/UploadBackground';
 import React from 'react';
 import { CallToAction } from './components/CallToAction';
 import { Features } from './components/Features';
@@ -10,9 +10,9 @@ import { Statistics } from './components/Statistics';
 
 const PortalPage: React.FC = () => {
   return (
-    <div style={{ position: 'relative', minHeight: '100vh', background: '#09090b', overflowX: 'hidden' }}>
-      <DottedGlowBackground />
-      <div style={{ position: 'relative', zIndex: 1 }}>
+    <div style={{ position: 'fixed', top: 0, left: 0, width: '100vw', height: '100vh', zIndex: 1, background: '#020617', overflow: 'hidden' }}>
+      <UploadBackground />
+      <div style={{ position: 'relative', zIndex: 1, height: '100%', overflowX: 'hidden', overflowY: 'auto' }}>
         <Navbar />
         <main>
           <Hero />
