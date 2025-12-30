@@ -1,15 +1,14 @@
 /* eslint-disable @typescript-eslint/no-use-before-define */
 /* eslint-disable no-promise-executor-return */
 
-import { PageContainer } from '@ant-design/pro-components';
-import { history, request, useSearchParams } from '@umijs/max';
+import DottedGlowBackground from '@/components/DottedGlowBackground';
+import { history, useSearchParams } from '@umijs/max';
 import {
   Button,
   Card,
   Checkbox,
   Divider,
   Input,
-  message,
   Modal,
   Rate,
   Space,
@@ -17,312 +16,37 @@ import {
   Switch,
   Tag,
   Typography,
+  message,
 } from 'antd';
 import React, { useEffect, useRef, useState } from 'react';
+import {
+  fetchDocumentContent,
+  fetchRiskDetail,
+  fetchRisks,
+  fetchStatus,
+  triggerAnalysis,
+  uploadEditedFile,
+} from './api';
 import './index.less';
-import type {
+import {
   AnalysisResult,
-  ApiAnalyzeResponse,
-  ApiDocumentContentResponse,
   ApiRisk,
-  ApiRisksResponse,
-  ApiStatusResponse,
+  AppliedEdit,
+  BaseToEditedSegment,
+  ExportSection,
   HighlightType,
   LegalBasis,
   Risk,
   Suggestion,
+  SuggestionDecision,
 } from './typing';
-
-// 后端 API 基础地址
-// - 开发环境推荐使用 Umi proxy（见 .umirc.ts），此时这里保持空字符串即可走同源 /api。
-// - 如需直连某个后端（例如局域网 IP），可在运行前设置环境变量 UMI_APP_API_BASE_URL。
-const API_BASE_URL = 'http://api.legalrag.studio';
-const UPLOAD_URL = `${API_BASE_URL}/api/v1/upload`;
-
-type ExportSection = 'risks' | 'suggestions' | 'legal' | 'contract';
-
-const escapeHtml = (input: string) =>
-  input
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#039;');
-
-const formatDateTime = (d: Date) => {
-  const pad = (n: number) => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(
-    d.getHours(),
-  )}:${pad(d.getMinutes())}`;
-};
-
-const buildHighlightedHtml = (
-  contractText: string,
-  highlights: Array<{
-    range: { start: number; end: number };
-    type: HighlightType;
-    id: string;
-  }>,
-) => {
-  // highlights 必须按 start 排序
-  const safeHighlights = [...highlights].sort(
-    (a, b) => a.range.start - b.range.start,
-  );
-
-  let html = '';
-  let lastIndex = 0;
-
-  for (const h of safeHighlights) {
-    if (h.range.start < lastIndex) continue;
-    if (h.range.start < 0 || h.range.end > contractText.length) continue;
-    if (h.range.end <= h.range.start) continue;
-
-    html += escapeHtml(contractText.substring(lastIndex, h.range.start));
-    html += `<mark class="hl ${h.type}">${escapeHtml(
-      contractText.substring(h.range.start, h.range.end),
-    )}</mark>`;
-    lastIndex = h.range.end;
-  }
-
-  html += escapeHtml(contractText.substring(lastIndex));
-  return html;
-};
-
-/**
- * 将后端 API 响应转换为前端数据结构
- */
-const transformApiResponse = (
-  apiData: ApiRisksResponse,
-  fallbackContent?: string,
-): AnalysisResult => {
-  const risks: Risk[] = [];
-  const legalBasis: LegalBasis[] = [];
-  const suggestions: Suggestion[] = [];
-  const sourceContent = fallbackContent ?? apiData.raw_content ?? '';
-
-  apiData.risks.forEach((apiRisk) => {
-    // 转换风险项
-    const riskId = `risk-${apiRisk.identifier}`;
-
-    // 从 detected_issue 生成标题（取前25个字符）
-    const issueText = apiRisk.detected_issue || '';
-    const titleMatch = issueText.match(/^(.{0,25})/);
-    const title = titleMatch
-      ? titleMatch[1] + (issueText.length > 25 ? '...' : '')
-      : '风险提示';
-
-    // 转换关联的法律依据
-    const riskLegalBasis: LegalBasis[] = apiRisk.legal_basis.map(
-      (legal, legalIndex) => ({
-        id: `legal-${apiRisk.identifier}-${legalIndex}`,
-        lawName: legal.law_name,
-        article: legal.order,
-        content: legal.content,
-        score: legal.relevance_score,
-        explanation: undefined,
-        relatedRange: apiRisk.highlight_range,
-      }),
-    );
-
-    // 添加到全局法律依据列表（去重）
-    riskLegalBasis.forEach((lb) => {
-      if (
-        !legalBasis.find(
-          (existing) =>
-            existing.lawName === lb.lawName && existing.article === lb.article,
-        )
-      ) {
-        legalBasis.push(lb);
-      }
-    });
-
-    const risk: Risk = {
-      id: riskId,
-      identifier: apiRisk.identifier,
-      level: apiRisk.level,
-      title,
-      content: issueText,
-      suggestion: apiRisk.suggestions,
-      highlightRange: apiRisk.highlight_range,
-      legalBasis: riskLegalBasis,
-    };
-
-    risks.push(risk);
-
-    // 如果有修改建议，也创建一个 Suggestion 项
-    // 兼容：后端可能把“建议措施”和“具体修改方案”拆为不同字段
-    const apiRevisionText =
-      (apiRisk as any)?.suggested_revision ?? (apiRisk as any)?.revised_text;
-    const apiOriginalText = (apiRisk as any)?.original_text as
-      | string
-      | undefined;
-    const apiReasonText =
-      ((apiRisk as any)?.revision_rationale as string | undefined) ??
-      ((apiRisk as any)?.suggestion_reason as string | undefined);
-
-    // 只在有“具体修改方案”时生成 Suggestion，避免用 suggestions 兜底导致两者一致
-    if (apiRevisionText) {
-      // 尝试从原文中截取相关文本作为"原文"
-      let originalText = '';
-      if (sourceContent && apiRisk.highlight_range) {
-        const { start, end } = apiRisk.highlight_range;
-        if (start >= 0 && end <= sourceContent.length) {
-          originalText = sourceContent.substring(start, end);
-        }
-      }
-
-      if (apiOriginalText) {
-        originalText = apiOriginalText;
-      }
-
-      // 如果无法获取原文（或者太长），截取一部分或使用 detected_issue 作为 fallback
-      if (!originalText) {
-        originalText =
-          issueText.substring(0, 50) + (issueText.length > 50 ? '...' : '');
-      } else if (originalText.length > 100) {
-        originalText = originalText.substring(0, 100) + '...';
-      }
-
-      suggestions.push({
-        id: `sug-${apiRisk.identifier}`,
-        original: originalText,
-        revised: apiRevisionText,
-        reason: apiReasonText || `针对风险：${title}`,
-        highlightRange: apiRisk.highlight_range,
-      });
-    }
-  });
-
-  return {
-    contractText: sourceContent || undefined,
-    risks,
-    suggestions,
-    legalBasis,
-  };
-};
-
-type SuggestionDecision = 'accepted' | 'rejected' | 'undecided';
-
-type AppliedEdit = {
-  suggestionId: string;
-  range: { start: number; end: number };
-};
-
-type BaseToEditedSegment =
-  | {
-      kind: 'copy';
-      baseStart: number;
-      baseEnd: number;
-      outStart: number;
-      outEnd: number;
-    }
-  | {
-      kind: 'replace';
-      suggestionId: string;
-      baseStart: number;
-      baseEnd: number;
-      outStart: number;
-      outEnd: number;
-    };
-
-/**
- * 基于“原文 + 已采纳建议集合”，生成修改版正文。
- * 说明：
- * - 统一从 baseText 重新计算，避免多次替换导致 range 漂移。
- * - 只对非重叠、合法 range 进行应用；重叠项将被跳过。
- */
-const applyAcceptedSuggestions = (
-  baseText: string,
-  suggestions: Suggestion[],
-  decisions: Record<string, SuggestionDecision>,
-): {
-  text: string;
-  appliedEdits: AppliedEdit[];
-  skippedIds: string[];
-  segments: BaseToEditedSegment[];
-} => {
-  const accepted = (suggestions ?? []).filter(
-    (s) => decisions[s.id] === 'accepted',
-  );
-
-  const sorted = [...accepted]
-    .filter(
-      (s) =>
-        s?.highlightRange &&
-        Number.isFinite(s.highlightRange.start) &&
-        Number.isFinite(s.highlightRange.end) &&
-        s.highlightRange.end > s.highlightRange.start,
-    )
-    .sort((a, b) => a.highlightRange.start - b.highlightRange.start);
-
-  let out = '';
-  let lastIndex = 0;
-  const appliedEdits: AppliedEdit[] = [];
-  const skippedIds: string[] = [];
-  const segments: BaseToEditedSegment[] = [];
-  let lastAcceptedEnd = -1;
-
-  for (const s of sorted) {
-    const { start, end } = s.highlightRange;
-    if (start < 0 || end > baseText.length || end <= start) {
-      skippedIds.push(s.id);
-      continue;
-    }
-    // 简单处理：跳过与已采纳区间重叠的建议
-    if (start < lastAcceptedEnd) {
-      skippedIds.push(s.id);
-      continue;
-    }
-
-    if (start > lastIndex) {
-      const outStart = out.length;
-      out += baseText.slice(lastIndex, start);
-      const outEnd = out.length;
-      segments.push({
-        kind: 'copy',
-        baseStart: lastIndex,
-        baseEnd: start,
-        outStart,
-        outEnd,
-      });
-    }
-    const editStart = out.length;
-    const replacement = s.revised ?? '';
-    out += replacement;
-    const editEnd = out.length;
-
-    segments.push({
-      kind: 'replace',
-      suggestionId: s.id,
-      baseStart: start,
-      baseEnd: end,
-      outStart: editStart,
-      outEnd: editEnd,
-    });
-
-    appliedEdits.push({
-      suggestionId: s.id,
-      range: { start: editStart, end: editEnd },
-    });
-    lastIndex = end;
-    lastAcceptedEnd = end;
-  }
-
-  if (lastIndex < baseText.length) {
-    const outStart = out.length;
-    out += baseText.slice(lastIndex);
-    const outEnd = out.length;
-    segments.push({
-      kind: 'copy',
-      baseStart: lastIndex,
-      baseEnd: baseText.length,
-      outStart,
-      outEnd,
-    });
-  }
-
-  return { text: out, appliedEdits, skippedIds, segments };
-};
+import {
+  applyAcceptedSuggestions,
+  buildHighlightedHtml,
+  escapeHtml,
+  formatDateTime,
+  transformApiResponse,
+} from './utils';
 
 const ContractAnalysis: React.FC = () => {
   const [searchParams] = useSearchParams();
@@ -428,91 +152,19 @@ const ContractAnalysis: React.FC = () => {
     document.body.style.userSelect = '';
   };
 
-  // API 3: 获取分析状态
-  const fetchStatus = async (): Promise<ApiStatusResponse | null> => {
-    try {
-      return await request<ApiStatusResponse>(
-        `${API_BASE_URL}/api/v1/documents/${fileId}/risks/status`,
-        { method: 'GET' },
-      );
-    } catch (error) {
-      console.error('Fetch status error:', error);
-      return null;
-    }
-  };
-
-  // 新增：获取文档原文内容
-  const fetchDocumentContent =
-    async (): Promise<ApiDocumentContentResponse | null> => {
-      try {
-        const res = await request<ApiDocumentContentResponse>(
-          `${API_BASE_URL}/api/v1/documents/${fileId}/content`,
-          { method: 'GET' },
-        );
-        if (res?.raw_content) {
-          setDocumentContent(res.raw_content);
-        }
-        return res;
-      } catch (error) {
-        console.error('Fetch document content error:', error);
-        return null;
-      }
-    };
-
-  // API 1: 获取完整结果
-  const fetchRisks = async (): Promise<ApiRisksResponse | null> => {
-    try {
-      return await request<ApiRisksResponse>(
-        `${API_BASE_URL}/api/v1/documents/${fileId}/risks`,
-        { method: 'GET' },
-      );
-    } catch (error) {
-      console.error('Fetch risks error:', error);
-      return null;
-    }
-  };
-
-  // 新增：按 identifier 获取单条风险详情
-  const fetchRiskDetail = async (
-    identifier: string,
-  ): Promise<ApiRisk | null> => {
-    if (!fileId) return null;
-    try {
-      const res = await request<ApiRisk>(
-        `${API_BASE_URL}/api/v1/documents/${fileId}/risks/${identifier}`,
-        { method: 'GET' },
-      );
-      return res;
-    } catch (error) {
-      console.error('Fetch risk detail error:', error);
-      message.error('获取风险详情失败');
-      return null;
-    }
-  };
-
-  // API 2: 触发分析
-  const triggerAnalysis = async (): Promise<ApiAnalyzeResponse | null> => {
-    try {
-      return await request<ApiAnalyzeResponse>(
-        `${API_BASE_URL}/api/v1/documents/${fileId}/risks/analyze`,
-        {
-          method: 'POST',
-          data: { top_k: 1 },
-        },
-      );
-    } catch (error) {
-      console.error('Trigger analysis error:', error);
-      return null;
-    }
-  };
-
   // 加载最终结果
   const loadResults = async () => {
+    if (!fileId) return;
+
     // 并行获取原文内容 + 风险分析结果
     const [contentRes, risksRes] = await Promise.all([
-      fetchDocumentContent(),
-      fetchRisks(),
+      fetchDocumentContent(fileId),
+      fetchRisks(fileId),
     ]);
+
+    if (contentRes?.raw_content) {
+      setDocumentContent(contentRes.raw_content);
+    }
 
     if (risksRes && risksRes.status === 'success') {
       const transformed = transformApiResponse(
@@ -525,7 +177,7 @@ const ContractAnalysis: React.FC = () => {
       if (risksRes.risks && risksRes.risks.length > 0) {
         const defaultRisk =
           risksRes.risks.find((r) => r.identifier === '0') ?? risksRes.risks[0];
-        const detail = await fetchRiskDetail(defaultRisk.identifier);
+        const detail = await fetchRiskDetail(fileId, defaultRisk.identifier);
         if (detail) {
           setSelectedRiskDetail(detail);
           // 同步高亮对应的风险段落
@@ -546,9 +198,10 @@ const ContractAnalysis: React.FC = () => {
   // 轮询状态
   const pollStatus = () => {
     if (pollTimerRef.current) clearTimeout(pollTimerRef.current);
+    if (!fileId) return;
 
     pollTimerRef.current = setTimeout(async () => {
-      const statusRes = await fetchStatus();
+      const statusRes = await fetchStatus(fileId);
       if (!statusRes) {
         // 网络错误等，暂停轮询或继续重试？这里选择继续重试
         pollStatus();
@@ -571,16 +224,17 @@ const ContractAnalysis: React.FC = () => {
   };
 
   const handleTriggerAnalysis = async () => {
+    if (!fileId) return;
     setAnalysisStatus('analyzing');
     // 同样，触发分析也可能因为数据库延迟而404，给予一次重试机会
-    let analyzeRes = await triggerAnalysis();
+    let analyzeRes = await triggerAnalysis(fileId);
 
     if (!analyzeRes) {
       console.log('First analysis trigger failed, retrying in 1s...');
       await new Promise<void>((resolve) => {
         setTimeout(resolve, 1000);
       });
-      analyzeRes = await triggerAnalysis();
+      analyzeRes = await triggerAnalysis(fileId);
     }
 
     if (analyzeRes && analyzeRes.status === 'analyzing') {
@@ -660,12 +314,13 @@ const ContractAnalysis: React.FC = () => {
 
   // 处理高亮点击
   const handleHighlightClick = (type: HighlightType, id: string) => {
+    if (!fileId) return;
     if (type === 'risk') {
       const risk = analysisResult?.risks.find((r) => r.id === id);
       if (risk) {
         setActiveHighlight(id);
         // 点击正文高亮时，同步加载右侧风险详情
-        fetchRiskDetail(risk.identifier).then((detail) => {
+        fetchRiskDetail(fileId, risk.identifier).then((detail) => {
           if (detail) {
             setSelectedRiskDetail(detail);
           }
@@ -1050,7 +705,7 @@ const ContractAnalysis: React.FC = () => {
               );
               if (risk) {
                 // 复用风险弹窗，允许在弹窗里单独取消/恢复该条修改
-                fetchRiskDetail(risk.identifier).then((detail) => {
+                fetchRiskDetail(fileId || '', risk.identifier).then((detail) => {
                   if (detail) setSelectedRiskDetail(detail);
                 });
                 showRiskModal(risk);
@@ -1097,22 +752,12 @@ const ContractAnalysis: React.FC = () => {
     try {
       setLoading(true);
 
-      const formData = new FormData();
       const file = new File([text], `edited-${fileId || 'contract'}.txt`, {
         type: 'text/plain',
       });
-      formData.append('file', file);
 
-      const resp = await fetch(UPLOAD_URL, {
-        method: 'POST',
-        body: formData,
-      });
+      const json = await uploadEditedFile(file);
 
-      if (!resp.ok) {
-        throw new Error(`HTTP ${resp.status}`);
-      }
-
-      const json = (await resp.json()) as any;
       if (json?.success && json?.data?.uuid) {
         message.success('已上传修改版，开始重新分析');
         history.push(`/contract-analysis?fileId=${json.data.uuid}`);
@@ -1470,16 +1115,17 @@ const ContractAnalysis: React.FC = () => {
         : 'undecided';
 
       return (
-        <div className="detail-modal">
+        <div className="detail-modal dark-modal">
           <div className="modal-section">
-            <div className="section-label">风险等级</div>
+            <div className="section-label !text-brand-300">风险等级</div>
             <Tag
+              className="!border-none !px-4 !py-1 !rounded-full"
               color={
                 risk.level === 'high'
-                  ? 'red'
+                  ? '#f5222d'
                   : risk.level === 'medium'
-                  ? 'orange'
-                  : 'green'
+                  ? '#fa8c16'
+                  : '#52c41a'
               }
             >
               {risk.level === 'high'
@@ -1490,29 +1136,29 @@ const ContractAnalysis: React.FC = () => {
             </Tag>
           </div>
           <div className="modal-section">
-            <div className="section-label">风险描述</div>
-            <div className="section-content">{risk.content}</div>
+            <div className="section-label !text-brand-300">风险描述</div>
+            <div className="section-content !bg-white/5 !text-slate-200 !border-white/10 !rounded-xl !p-4">{risk.content}</div>
           </div>
           {risk.suggestion && (
             <div className="modal-section">
-              <div className="section-label">建议措施</div>
-              <div className="section-content">{risk.suggestion}</div>
+              <div className="section-label !text-brand-300">建议措施</div>
+              <div className="section-content !bg-brand-500/10 !text-brand-100 !border-brand-500/20 !rounded-xl !p-4">{risk.suggestion}</div>
             </div>
           )}
 
           {revisionSuggestion ? (
             <div className="modal-section">
-              <div className="section-label">具体修改方案</div>
-              <div className="diff-display" style={{ marginBottom: 10 }}>
+              <div className="section-label !text-brand-300">具体修改方案</div>
+              <div className="diff-display" style={{ marginBottom: 16 }}>
                 <div className="diff-row">
-                  <div className="diff-label">原文</div>
-                  <div className="diff-content original">
+                  <div className="diff-label !text-slate-400">原文</div>
+                  <div className="diff-content original !bg-red-500/10 !text-red-200 !border-red-500/20 !rounded-lg">
                     {revisionSuggestion.original}
                   </div>
                 </div>
                 <div className="diff-row">
-                  <div className="diff-label">修改为</div>
-                  <div className="diff-content revised">
+                  <div className="diff-label !text-slate-400">修改为</div>
+                  <div className="diff-content revised !bg-green-500/10 !text-green-200 !border-green-500/20 !rounded-lg">
                     {revisionSuggestion.revised}
                   </div>
                 </div>
@@ -1522,17 +1168,17 @@ const ContractAnalysis: React.FC = () => {
                 style={{
                   display: 'flex',
                   alignItems: 'center',
-                  gap: 8,
+                  gap: 12,
                   flexWrap: 'wrap',
                 }}
               >
-                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                <Space wrap>
                   <Button
                     size="middle"
                     className={
                       decision === 'accepted'
-                        ? '!h-9 !rounded-lg !bg-brand-600 hover:!bg-brand-700 !text-white !border-brand-600'
-                        : '!h-9 !rounded-lg !bg-white hover:!bg-slate-50 !text-slate-700 !border-slate-200'
+                        ? '!h-10 !px-6 !rounded-xl !bg-brand-600 !text-white !border-none shadow-lg shadow-brand-600/20'
+                        : '!h-10 !px-6 !rounded-xl !bg-white/5 !text-slate-300 !border-white/10 hover:!bg-white/10 hover:!border-brand-500/50'
                     }
                     onClick={() => {
                       updateDecision(
@@ -1541,15 +1187,15 @@ const ContractAnalysis: React.FC = () => {
                       );
                     }}
                   >
-                    采纳
+                    采纳建议
                   </Button>
 
                   <Button
                     size="middle"
                     className={
                       decision === 'rejected'
-                        ? '!h-9 !rounded-lg !bg-slate-800 hover:!bg-slate-900 !text-white !border-slate-800'
-                        : '!h-9 !rounded-lg !bg-white hover:!bg-slate-50 !text-slate-700 !border-slate-200'
+                        ? '!h-10 !px-6 !rounded-xl !bg-slate-700 !text-white !border-none'
+                        : '!h-10 !px-6 !rounded-xl !bg-white/5 !text-slate-300 !border-white/10 hover:!bg-white/10 hover:!border-red-500/50'
                     }
                     onClick={() => {
                       updateDecision(
@@ -1563,39 +1209,38 @@ const ContractAnalysis: React.FC = () => {
 
                   <Button
                     size="middle"
-                    className="!h-9 !rounded-lg"
+                    ghost
+                    className="!h-10 !px-6 !rounded-xl !text-slate-500 !border-white/5 hover:!text-slate-300"
                     onClick={() => {
                       updateDecision(revisionSuggestion.id, 'undecided');
                     }}
                   >
                     清除选择
                   </Button>
-                </div>
+                </Space>
               </div>
             </div>
           ) : null}
           {hasLegalBasis && (
             <div className="modal-section">
-              <div className="section-label">相关法律依据</div>
-              <div className="section-content">
+              <div className="section-label !text-brand-300">相关法律依据</div>
+              <div className="section-content space-y-3 !bg-transparent !p-0">
                 {legalBasisList.map((lb) => (
-                  <div key={lb.id} style={{ marginBottom: 8 }}>
-                    <div style={{ fontWeight: 600 }}>
+                  <div key={lb.id} className="!bg-white/5 !border !border-white/10 !rounded-xl !p-4">
+                    <div className="text-slate-200 font-semibold mb-2">
                       {lb.lawName} {lb.article}
                     </div>
-                    <div
-                      style={{ margin: '6px 0', fontSize: 12, color: '#666' }}
-                    >
+                    <div className="text-slate-400 text-sm leading-relaxed mb-3">
                       {lb.content}
                     </div>
-                    <div className="legal-score">
+                    <div className="legal-score flex items-center">
                       <Rate
                         disabled
                         allowHalf
                         value={lb.score * 5}
-                        style={{ fontSize: 12 }}
+                        style={{ fontSize: 12, color: '#fadb14' }}
                       />
-                      <span style={{ marginLeft: 8, fontSize: 12 }}>
+                      <span className="ml-3 text-xs text-slate-500">
                         相关度: {(lb.score * 100).toFixed(0)}%
                       </span>
                     </div>
@@ -1611,21 +1256,25 @@ const ContractAnalysis: React.FC = () => {
     if (modalType === 'suggestion') {
       const suggestion = modalContent as Suggestion;
       return (
-        <div className="detail-modal">
+        <div className="detail-modal dark-modal">
           <div className="diff-display">
             <div className="diff-row">
-              <div className="diff-label">原文</div>
-              <div className="diff-content original">{suggestion.original}</div>
+              <div className="diff-label !text-slate-400">原文</div>
+              <div className="diff-content original !bg-red-500/10 !text-red-200 !border-red-500/20 !rounded-lg">
+                {suggestion.original}
+              </div>
             </div>
             <div className="diff-row">
-              <div className="diff-label">修改为</div>
-              <div className="diff-content revised">{suggestion.revised}</div>
+              <div className="diff-label !text-slate-400">修改为</div>
+              <div className="diff-content revised !bg-green-500/10 !text-green-200 !border-green-500/20 !rounded-lg">
+                {suggestion.revised}
+              </div>
             </div>
           </div>
           {suggestion.reason && (
-            <div className="modal-section">
-              <div className="section-label">修改理由</div>
-              <div className="section-content">{suggestion.reason}</div>
+            <div className="modal-section mt-4">
+              <div className="section-label !text-brand-300">修改理由</div>
+              <div className="section-content !bg-white/5 !text-slate-200 !border-white/10 !rounded-xl !p-4">{suggestion.reason}</div>
             </div>
           )}
         </div>
@@ -1635,32 +1284,32 @@ const ContractAnalysis: React.FC = () => {
     if (modalType === 'legal') {
       const legal = modalContent as LegalBasis;
       return (
-        <div className="detail-modal">
+        <div className="detail-modal dark-modal">
           <div className="modal-section">
-            <div className="section-label">法律名称</div>
-            <div className="section-content">{legal.lawName}</div>
+            <div className="section-label !text-brand-300">法律名称</div>
+            <div className="section-content !bg-white/5 !text-slate-200 !border-white/10 !rounded-xl !p-4">{legal.lawName}</div>
           </div>
           <div className="modal-section">
-            <div className="section-label">条款</div>
-            <div className="section-content">{legal.article}</div>
+            <div className="section-label !text-brand-300">条款</div>
+            <div className="section-content !bg-white/5 !text-slate-200 !border-white/10 !rounded-xl !p-4">{legal.article}</div>
           </div>
           <div className="modal-section">
-            <div className="section-label">法条内容</div>
-            <div className="section-content">{legal.content}</div>
+            <div className="section-label !text-brand-300">法条内容</div>
+            <div className="section-content !bg-white/5 !text-slate-200 !border-white/10 !rounded-xl !p-4">{legal.content}</div>
           </div>
           <div className="modal-section">
-            <div className="section-label">相关度评分</div>
-            <div className="legal-score">
-              <Rate disabled allowHalf value={legal.score * 5} />
-              <span style={{ marginLeft: 8 }}>
+            <div className="section-label !text-brand-300">相关度评分</div>
+            <div className="legal-score flex items-center p-2">
+              <Rate disabled allowHalf value={legal.score * 5} style={{ color: '#fadb14' }} />
+              <span className="ml-4 text-slate-400">
                 {(legal.score * 100).toFixed(0)}%
               </span>
             </div>
           </div>
           {legal.explanation && (
             <div className="modal-section">
-              <div className="section-label">适用说明</div>
-              <div className="section-content">{legal.explanation}</div>
+              <div className="section-label !text-brand-300">适用说明</div>
+              <div className="section-content !bg-brand-500/10 !text-brand-100 !border-brand-500/20 !rounded-xl !p-4">{legal.explanation}</div>
             </div>
           )}
         </div>
@@ -1676,23 +1325,26 @@ const ContractAnalysis: React.FC = () => {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-gradient-to-b from-slate-50 to-white flex items-center justify-center px-4">
-        <div className="w-full max-w-md rounded-2xl bg-white border border-slate-100 shadow-xl px-8 py-10 text-center space-y-4">
-          <div className="bg-gradient-to-r from-brand-600 to-blue-500 inline-flex items-center justify-center rounded-full px-4 py-1 text-xs font-medium text-white">
+      <div className="min-h-screen bg-black flex items-center justify-center px-4">
+        <DottedGlowBackground />
+        <div className="relative z-10 w-full max-w-md rounded-2xl bg-white/5 border border-white/10 shadow-2xl px-8 py-10 text-center space-y-4 backdrop-blur-xl">
+          <div className="bg-brand-600/20 border border-brand-500/30 inline-flex items-center justify-center rounded-full px-4 py-1 text-xs font-medium text-brand-300">
             {analysisStatus === 'analyzing'
               ? '合同智能分析进行中…'
               : '正在准备分析...'}
           </div>
-          <p className="text-sm text-slate-500">
+          <p className="text-sm text-slate-400">
             我们正在为您解析合同条款并生成风险提示、修改意见与法律依据，请稍候。
           </p>
           <div className="flex justify-center pt-2">
             <Spin
               size="large"
               tip={
-                analysisStatus === 'analyzing'
-                  ? '正在分析合同...'
-                  : '正在加载...'
+                <span className="text-slate-400 mt-2 block">
+                  {analysisStatus === 'analyzing'
+                    ? '正在分析合同...'
+                    : '正在加载...'}
+                </span>
               }
             />
           </div>
@@ -1702,409 +1354,361 @@ const ContractAnalysis: React.FC = () => {
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-b from-slate-50 to-white px-4 py-6">
-      <div className="mx-auto max-w-7xl rounded-2xl bg-white border border-slate-100 shadow-xl overflow-hidden">
-        {/* 顶部渐变说明条 */}
-        <div className="bg-gradient-to-r from-brand-600 to-blue-500 px-6 py-4 flex items-center justify-between">
-          <div>
-            <p className="text-xs font-semibold tracking-wide text-brand-50/80 uppercase">
-              LegalRag
-            </p>
-            <p className="text-sm text-brand-50">合同分析结果</p>
+    <div style={{ position: 'relative', width: '100vw', minHeight: '100vh', background: '#09090b', overflowX: 'hidden' }}>
+      <DottedGlowBackground />
+      
+      <div style={{ position: 'relative', zIndex: 1, padding: '24px 24px 48px' }}>
+        <div className="mx-auto max-w-7xl">
+          {/* 顶部渐变说明条 - 改为更通透的设计 */}
+          <div className="sexy-card mb-6 px-6 py-4 flex items-center justify-between">
+            <div>
+              <p className="text-xs font-semibold tracking-wide text-brand-200/80 uppercase">
+                LegalRag
+              </p>
+              <p className="text-xl font-bold text-white tracking-tight">合同分析结果</p>
+            </div>
+             <Space>
+                <span className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs text-brand-100 backdrop-blur-md">
+                  风险提示 · 修改意见 · 法律依据
+                </span>
+                <Button 
+                  ghost 
+                  size="small" 
+                  onClick={handleBack}
+                  style={{ color: 'rgba(255,255,255,0.8)', borderColor: 'rgba(255,255,255,0.3)' }}
+                >
+                  返回
+                </Button>
+            </Space>
           </div>
-          <span className="rounded-full border border-white/30 bg-white/10 px-3 py-1 text-xs text-brand-50">
-            风险提示 · 修改意见 · 法律依据
-          </span>
-        </div>
 
-        {/* 浅色卡片主体 */}
-        <div className="contract-analysis px-4 pb-4 pt-2">
-          <PageContainer
-            header={{
-              title: '合同分析结果',
-              onBack: handleBack,
-              extra: [
-                <Button
-                  key="exportPdf"
-                  type="default"
-                  style={{
-                    background: '#ffffff',
-                    borderColor: '#d9d9d9',
-                    color: '#1677ff',
-                    fontWeight: 600,
-                  }}
-                  onClick={() => setExportModalOpen(true)}
-                >
-                  导出 PDF
-                </Button>,
-                <Button key="reanalyze" onClick={handleReanalyze}>
-                  重新分析
-                </Button>,
-              ],
-            }}
-          >
-            {analysisResult && (
-              <div className="analysis-content">
-                <div
-                  className="split-grid"
-                  ref={splitContainerRef}
-                  style={{
-                    ['--left-pane' as any]: `${leftPanePercent}%`,
-                  }}
-                >
-                  {/* 左侧：合同文本/编辑区 */}
-                  <div className="split-left">
-                    <Card
-                      title="合同文本"
-                      bordered={false}
-                      extra={
-                        <Space>
-                          {!isEditingContract ? (
-                            <>
-                              <Button size="small" onClick={handleStartEdit}>
-                                编辑
-                              </Button>
-                              {editedContractText ? (
+          {/* 主体内容 */}
+          <div className="contract-analysis">
+            <div className="analysis-content !p-0">
+               {/* 移除 PageContainer 的默认 header，使用自定义的 header */}
+               <div className="flex justify-end mb-4 gap-3">
+                  <Button
+                    className="sexy-card !border-white/20 !text-white hover:!bg-white/10 hover:!border-white/40 !h-9 !px-4 !bg-transparent"
+                    onClick={() => setExportModalOpen(true)}
+                  >
+                    导出 PDF
+                  </Button>
+                  <Button 
+                    type="primary"
+                    className="!bg-brand-600 hover:!bg-brand-500 !border-none !h-9 !px-4 !rounded-lg"
+                    onClick={handleReanalyze}
+                  >
+                    重新分析
+                  </Button>
+               </div>
+
+              {analysisResult && (
+                <div className="analysis-content-inner">
+                  <div
+                    className="split-grid"
+                    ref={splitContainerRef}
+                    style={{
+                      ['--left-pane' as any]: `${leftPanePercent}%`,
+                    }}
+                  >
+                    {/* 左侧：合同文本/编辑区 */}
+                    <div className="split-left">
+                      <div className="sexy-card h-full flex flex-col overflow-hidden">
+                        <div className="p-4 border-b border-white/10 flex justify-between items-center bg-white/5">
+                            <span className="text-white font-semibold">合同文本</span>
+                            <Space>
+                              {!isEditingContract ? (
+                                <>
+                                  <Button size="small" ghost onClick={handleStartEdit} className="!text-white/80 !border-white/20 hover:!border-brand-400 hover:!text-brand-400">
+                                    编辑
+                                  </Button>
+                                  {editedContractText ? (
+                                    <Button
+                                      size="small"
+                                      danger
+                                      ghost
+                                      onClick={handleDiscardEdits}
+                                      className="!border-red-500/30 hover:!bg-red-500/10"
+                                    >
+                                      撤销修改版
+                                    </Button>
+                                  ) : null}
+                                </>
+                              ) : (
+                                <>
+                                  <Button
+                                    size="small"
+                                    type="primary"
+                                    onClick={handleFinishEdit}
+                                    className="!bg-brand-600"
+                                  >
+                                    完成
+                                  </Button>
+                                  <Button size="small" ghost onClick={handleDiscardEdits} className="!text-white/80 !border-white/20">
+                                    撤销
+                                  </Button>
+                                </>
+                              )}
+                              {editedContractText && !isEditingContract ? (
                                 <Button
                                   size="small"
-                                  onClick={handleDiscardEdits}
+                                  type="primary"
+                                  ghost
+                                  onClick={uploadEditedAndAnalyze}
                                 >
-                                  撤销修改版
+                                  用修改版重新分析
                                 </Button>
                               ) : null}
-                            </>
-                          ) : (
-                            <>
-                              <Button
-                                size="small"
-                                type="primary"
-                                onClick={handleFinishEdit}
-                              >
-                                完成
-                              </Button>
-                              <Button size="small" onClick={handleDiscardEdits}>
-                                撤销
-                              </Button>
-                            </>
-                          )}
-                          {editedContractText && !isEditingContract ? (
-                            <Button
-                              size="small"
-                              onClick={uploadEditedAndAnalyze}
-                            >
-                              用修改版重新分析
-                            </Button>
-                          ) : null}
-                        </Space>
-                      }
-                    >
-                      <div
-                        className="contract-text-panel"
-                        ref={contractTextRef}
-                      >
-                        {isEditingContract ? (
-                          <div className="space-y-2">
-                            <div className="text-xs text-slate-500">
-                              提示：编辑/应用建议后，本页高亮定位将不再准确。
-                            </div>
-                            <Input.TextArea
-                              value={
-                                editedContractText ?? getPrintableContractText()
-                              }
-                              onChange={(e) =>
-                                setEditedContractText(e.target.value)
-                              }
-                              autoSize={{ minRows: 18, maxRows: 28 }}
-                            />
-                          </div>
-                        ) : editedContractText ? (
-                          <div className="space-y-2">
-                            <div className="text-xs text-slate-500">
-                              已生成修改版正文（绿色高亮为已采纳的修改内容）。
-                            </div>
-                            {renderEditedTextWithAppliedHighlights()}
-                          </div>
-                        ) : (
-                          renderHighlightedText()
-                        )}
-                      </div>
-                    </Card>
-                  </div>
-
-                  {/* 拖拽分隔条 */}
-                  <div
-                    className="split-resizer"
-                    role="separator"
-                    aria-orientation="vertical"
-                    aria-label="调整合同文本区域宽度"
-                    onPointerDown={handleResizerPointerDown}
-                    onPointerMove={handleResizerPointerMove}
-                    onPointerUp={stopResizerDrag}
-                    onPointerCancel={stopResizerDrag}
-                  />
-
-                  {/* 右侧：分析结果 + 风险详情 */}
-                  <div className="split-right">
-                    <div className="analysis-panel">
-                      {/* 风险详情（调用按 identifier 查询单条风险接口） */}
-                      <Card
-                        title="风险详情"
-                        bordered={false}
-                        style={{ marginBottom: 16 }}
-                        bodyStyle={{ padding: '20px' }}
-                      >
-                        {selectedRiskDetail ? (
-                          <div className="detail-container">
-                            <div
-                              className="modal-section"
-                              style={{
-                                display: 'flex',
-                                justifyContent: 'space-between',
-                                alignItems: 'center',
-                                marginBottom: 20,
-                              }}
-                            >
-                              <span style={{ fontSize: 16, fontWeight: 600 }}>
-                                风险等级
-                              </span>
-                              <Tag
-                                color={
-                                  selectedRiskDetail.level === 'high'
-                                    ? '#f5222d'
-                                    : selectedRiskDetail.level === 'medium'
-                                    ? '#fa8c16'
-                                    : '#52c41a'
-                                }
-                                style={{
-                                  padding: '4px 16px',
-                                  fontSize: 14,
-                                  borderRadius: 12,
-                                  marginRight: 0,
-                                }}
-                              >
-                                {selectedRiskDetail.level === 'high'
-                                  ? '高风险'
-                                  : selectedRiskDetail.level === 'medium'
-                                  ? '中风险'
-                                  : '低风险'}
-                              </Tag>
-                            </div>
-
-                            <Card
-                              type="inner"
-                              title={
-                                <span style={{ color: '#cf1322' }}>
-                                  🚨 风险描述
-                                </span>
-                              }
-                              size="small"
-                              style={{
-                                marginBottom: 16,
-                                backgroundColor: '#fff1f0',
-                                borderColor: '#ffa39e',
-                              }}
-                            >
-                              <div style={{ lineHeight: '1.6', color: '#333' }}>
-                                {selectedRiskDetail.detected_issue}
+                            </Space>
+                        </div>
+                        
+                        <div
+                          className="contract-text-panel flex-1"
+                          ref={contractTextRef}
+                        >
+                          {isEditingContract ? (
+                            <div className="space-y-2 h-full flex flex-col">
+                              <div className="text-xs text-slate-400">
+                                提示：编辑/应用建议后，本页高亮定位将不再准确。
                               </div>
-                            </Card>
-
-                            {selectedRiskDetail.suggestions && (
-                              <Card
-                                type="inner"
-                                title={
-                                  <span style={{ color: '#d48806' }}>
-                                    💡 建议措施
-                                  </span>
+                              <Input.TextArea
+                                className="!bg-black/20 !text-slate-200 !border-white/10 placeholder:!text-slate-600 flex-1"
+                                value={
+                                  editedContractText ?? getPrintableContractText()
                                 }
-                                size="small"
-                                style={{
-                                  marginBottom: 16,
-                                  backgroundColor: '#feffe6',
-                                  borderColor: '#fffb8f',
-                                }}
-                              >
-                                <div
-                                  style={{ lineHeight: '1.6', color: '#333' }}
-                                >
-                                  {selectedRiskDetail.suggestions}
-                                </div>
-                              </Card>
-                            )}
+                                onChange={(e) =>
+                                  setEditedContractText(e.target.value)
+                                }
+                                style={{ resize: 'none', height: '100%' }}
+                              />
+                            </div>
+                          ) : editedContractText ? (
+                            <div className="space-y-2">
+                              <div className="text-xs text-slate-400">
+                                已生成修改版正文（绿色高亮为已采纳的修改内容）。
+                              </div>
+                              {renderEditedTextWithAppliedHighlights()}
+                            </div>
+                          ) : (
+                            renderHighlightedText()
+                          )}
+                        </div>
+                      </div>
+                    </div>
 
-                            {selectedRiskDetail.legal_basis &&
-                              selectedRiskDetail.legal_basis.length > 0 && (
-                                <div className="modal-section">
+                    {/* 拖拽分隔条 */}
+                    <div
+                      className="split-resizer"
+                      role="separator"
+                      aria-orientation="vertical"
+                      aria-label="调整合同文本区域宽度"
+                      onPointerDown={handleResizerPointerDown}
+                      onPointerMove={handleResizerPointerMove}
+                      onPointerUp={stopResizerDrag}
+                      onPointerCancel={stopResizerDrag}
+                    />
+
+                    {/* 右侧：分析结果 + 风险详情 */}
+                    <div className="split-right">
+                      <div className="analysis-panel h-full">
+                        {/* 风险详情 */}
+                        <div className="sexy-card h-full flex flex-col overflow-hidden">
+                            <div className="p-4 border-b border-white/10 bg-white/5">
+                                <span className="text-white font-semibold">风险详情</span>
+                            </div>
+                            <div className="p-5 flex-1 overflow-y-auto">
+                              {selectedRiskDetail ? (
+                                <div className="detail-container">
                                   <div
-                                    className="section-title"
+                                    className="modal-section"
                                     style={{
-                                      fontSize: 15,
-                                      fontWeight: 600,
-                                      marginBottom: 12,
-                                      marginTop: 24,
+                                      display: 'flex',
+                                      justifyContent: 'space-between',
+                                      alignItems: 'center',
+                                      marginBottom: 20,
                                     }}
                                   >
-                                    ⚖️ 相关法律依据
+                                    <span className="text-white text-lg font-semibold">
+                                      风险等级
+                                    </span>
+                                    <Tag
+                                      className="!border-none"
+                                      color={
+                                        selectedRiskDetail.level === 'high'
+                                          ? '#f5222d'
+                                          : selectedRiskDetail.level === 'medium'
+                                          ? '#fa8c16'
+                                          : '#52c41a'
+                                      }
+                                      style={{
+                                        padding: '4px 16px',
+                                        fontSize: 14,
+                                        borderRadius: 12,
+                                        marginRight: 0,
+                                      }}
+                                    >
+                                      {selectedRiskDetail.level === 'high'
+                                        ? '高风险'
+                                        : selectedRiskDetail.level === 'medium'
+                                        ? '中风险'
+                                        : '低风险'}
+                                    </Tag>
                                   </div>
-                                  <div className="section-content">
-                                    {selectedRiskDetail.legal_basis.map(
-                                      (lb, idx) => (
-                                        <Card
-                                          key={idx}
-                                          size="small"
-                                          hoverable
-                                          className="legal-card"
-                                          style={{
-                                            marginBottom: 12,
-                                            borderRadius: 6,
-                                            borderLeft: '4px solid #1890ff',
-                                          }}
+
+                                  <div className="mb-4 rounded-lg bg-red-500/10 border border-red-500/20 overflow-hidden">
+                                      <div className="px-3 py-2 bg-red-500/20 border-b border-red-500/20 text-red-300 text-sm font-semibold flex items-center gap-2">
+                                          <span>🚨 风险描述</span>
+                                      </div>
+                                      <div className="p-3 text-slate-200 text-sm leading-relaxed">
+                                          {selectedRiskDetail.detected_issue}
+                                      </div>
+                                  </div>
+
+                                  {selectedRiskDetail.suggestions && (
+                                    <div className="mb-4 rounded-lg bg-yellow-500/10 border border-yellow-500/20 overflow-hidden">
+                                        <div className="px-3 py-2 bg-yellow-500/20 border-b border-yellow-500/20 text-yellow-300 text-sm font-semibold flex items-center gap-2">
+                                            <span>💡 建议措施</span>
+                                        </div>
+                                        <div className="p-3 text-slate-200 text-sm leading-relaxed">
+                                            {selectedRiskDetail.suggestions}
+                                        </div>
+                                    </div>
+                                  )}
+
+                                  {selectedRiskDetail.legal_basis &&
+                                    selectedRiskDetail.legal_basis.length > 0 && (
+                                      <div className="modal-section mt-6">
+                                        <div
+                                          className="section-title text-white mb-3 font-semibold"
                                         >
-                                          <div
-                                            style={{
-                                              fontWeight: 600,
-                                              color: '#262626',
-                                              marginBottom: 4,
-                                            }}
-                                          >
-                                            {lb.law_name} {lb.order}
-                                          </div>
-                                          <div
-                                            style={{
-                                              fontSize: 13,
-                                              color: '#666',
-                                              marginBottom: 8,
-                                              lineHeight: '1.5',
-                                            }}
-                                          >
-                                            {lb.content}
-                                          </div>
-                                          <div
-                                            className="legal-score"
-                                            style={{
-                                              display: 'flex',
-                                              alignItems: 'center',
-                                            }}
-                                          >
-                                            <Rate
-                                              disabled
-                                              allowHalf
-                                              value={
-                                                (lb.relevance_score || 0) * 5
-                                              }
-                                              style={{ fontSize: 12 }}
-                                            />
-                                            <span
-                                              style={{
-                                                marginLeft: 8,
-                                                fontSize: 12,
-                                                color: '#8c8c8c',
-                                              }}
-                                            >
-                                              相关度:{' '}
-                                              {(
-                                                (lb.relevance_score || 0) * 100
-                                              ).toFixed(0)}
-                                              %
-                                            </span>
-                                          </div>
-                                        </Card>
-                                      ),
+                                          ⚖️ 相关法律依据
+                                        </div>
+                                        <div className="section-content space-y-3">
+                                          {selectedRiskDetail.legal_basis.map(
+                                            (lb, idx) => (
+                                              <div
+                                                key={idx}
+                                                className="rounded-lg bg-white/5 border border-white/10 p-3 hover:bg-white/10 transition-colors"
+                                              >
+                                                <div className="text-slate-200 font-medium mb-1">
+                                                  {lb.law_name} {lb.order}
+                                                </div>
+                                                <div className="text-slate-400 text-sm mb-2 leading-relaxed">
+                                                  {lb.content}
+                                                </div>
+                                                <div
+                                                  className="legal-score flex items-center"
+                                                >
+                                                  <Rate
+                                                    disabled
+                                                    allowHalf
+                                                    value={
+                                                      (lb.relevance_score || 0) * 5
+                                                    }
+                                                    style={{ fontSize: 12, color: '#fadb14' }}
+                                                  />
+                                                  <span className="ml-2 text-xs text-slate-500">
+                                                    相关度:{' '}
+                                                    {(
+                                                      (lb.relevance_score || 0) * 100
+                                                    ).toFixed(0)}
+                                                    %
+                                                  </span>
+                                                </div>
+                                              </div>
+                                            ),
+                                          )}
+                                        </div>
+                                      </div>
                                     )}
+                                </div>
+                              ) : (
+                                <div className="text-slate-500 text-center py-12 flex flex-col items-center justify-center h-full">
+                                  <div className="text-4xl mb-4 opacity-50">
+                                    📋
+                                  </div>
+                                  <div className="text-lg">暂无风险详情</div>
+                                  <div className="text-sm mt-2 opacity-60">
+                                    点击左侧合同内容的标记处查看
                                   </div>
                                 </div>
                               )}
-                          </div>
-                        ) : (
-                          <div className="text-gray-400 text-center py-12">
-                            <div style={{ fontSize: 40, marginBottom: 16 }}>
-                              📋
                             </div>
-                            <div>暂无风险详情</div>
-                            <div style={{ fontSize: 12, marginTop: 8 }}>
-                              点击左侧合同内容的标记处查看
-                            </div>
-                          </div>
-                        )}
-                      </Card>
+                        </div>
+                      </div>
                     </div>
                   </div>
                 </div>
-              </div>
-            )}
+              )}
+            </div>
+          </div>
 
-            {/* 详情 Modal */}
-            <Modal
-              title={getModalTitle()}
-              open={modalVisible}
-              onCancel={() => setModalVisible(false)}
-              footer={null}
-              width={700}
-            >
-              {renderModalContent()}
-            </Modal>
+          {/* 详情 Modal */}
+          <Modal
+            title={getModalTitle()}
+            open={modalVisible}
+            onCancel={() => setModalVisible(false)}
+            footer={null}
+            width={700}
+            className="dark-modal"
+          >
+            {renderModalContent()}
+          </Modal>
 
-            {/* 导出 PDF 设置 */}
-            <Modal
-              title="导出 PDF"
-              open={exportModalOpen}
-              onCancel={() => setExportModalOpen(false)}
-              okText="开始导出"
-              cancelText="取消"
-              okButtonProps={{
-                style: {
-                  backgroundColor: '#fff',
-                  color: '#1677ff',
-                  border: '1px solid #d9d9d9',
-                },
-              }}
-              onOk={() => {
-                setExportModalOpen(false);
-                // 使用 iframe 打印，不会被浏览器拦截
-                handleExportWithIframe();
-              }}
+          {/* 导出 PDF 设置 */}
+          <Modal
+            title="导出 PDF"
+            open={exportModalOpen}
+            onCancel={() => setExportModalOpen(false)}
+            okText="开始导出"
+            cancelText="取消"
+            className="dark-modal"
+            onOk={() => {
+              setExportModalOpen(false);
+              // 使用 iframe 打印，不会被浏览器拦截
+              handleExportWithIframe();
+            }}
+          >
+            <Typography.Paragraph
+              style={{ marginBottom: 10, color: 'rgba(255,255,255,0.5)' }}
             >
-              <Typography.Paragraph
-                style={{ marginBottom: 10, color: '#6b7280' }}
+              点击“开始导出”后将自动弹出打印对话框，在对话框中选择“保存为
+              PDF”即可导出。
+            </Typography.Paragraph>
+            <Divider style={{ margin: '12px 0', borderColor: 'rgba(255,255,255,0.1)' }} />
+            <div style={{ marginBottom: 12 }}>
+              <div style={{ fontWeight: 600, marginBottom: 8, color: '#fff' }}>导出内容</div>
+              <Checkbox.Group
+                value={exportSections}
+                onChange={(vals) => {
+                  const v = vals as ExportSection[];
+                  // 正文默认强制包含（防止用户误操作导致“空导出”）
+                  if (!v.includes('contract')) v.push('contract');
+                  setExportSections(Array.from(new Set(v)));
+                }}
               >
-                点击“开始导出”后将自动弹出打印对话框，在对话框中选择“保存为
-                PDF”即可导出。
-              </Typography.Paragraph>
-              <Divider style={{ margin: '12px 0' }} />
-              <div style={{ marginBottom: 12 }}>
-                <div style={{ fontWeight: 600, marginBottom: 8 }}>导出内容</div>
-                <Checkbox.Group
-                  value={exportSections}
-                  onChange={(vals) => {
-                    const v = vals as ExportSection[];
-                    // 正文默认强制包含（防止用户误操作导致“空导出”）
-                    if (!v.includes('contract')) v.push('contract');
-                    setExportSections(Array.from(new Set(v)));
-                  }}
-                >
-                  <Space wrap>
-                    <Checkbox value="contract">合同正文</Checkbox>
-                    <Checkbox value="risks">风险摘要</Checkbox>
-                    <Checkbox value="suggestions">修改建议</Checkbox>
-                    <Checkbox value="legal">法律依据</Checkbox>
-                  </Space>
-                </Checkbox.Group>
-              </div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                <div style={{ fontWeight: 600 }}>正文包含高亮</div>
-                <Switch
-                  checked={editedContractText ? false : exportIncludeHighlights}
-                  disabled={Boolean(editedContractText)}
-                  onChange={setExportIncludeHighlights}
-                />
-                <span style={{ color: '#6b7280', fontSize: 12 }}>
-                  {editedContractText
-                    ? '已修改正文：高亮会因位置偏移而失效'
-                    : '风险/建议/法条会以不同底色标记'}
-                </span>
-              </div>
-            </Modal>
-          </PageContainer>
+                <Space wrap>
+                  <Checkbox value="contract" className="!text-slate-300">合同正文</Checkbox>
+                  <Checkbox value="risks" className="!text-slate-300">风险摘要</Checkbox>
+                  <Checkbox value="suggestions" className="!text-slate-300">修改建议</Checkbox>
+                  <Checkbox value="legal" className="!text-slate-300">法律依据</Checkbox>
+                </Space>
+              </Checkbox.Group>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+              <div style={{ fontWeight: 600, color: '#fff' }}>正文包含高亮</div>
+              <Switch
+                checked={editedContractText ? false : exportIncludeHighlights}
+                disabled={Boolean(editedContractText)}
+                onChange={setExportIncludeHighlights}
+              />
+              <span style={{ color: 'rgba(255,255,255,0.4)', fontSize: 12 }}>
+                {editedContractText
+                  ? '已修改正文：高亮会因位置偏移而失效'
+                  : '风险/建议/法条会以不同底色标记'}
+              </span>
+            </div>
+          </Modal>
         </div>
       </div>
     </div>

@@ -1,37 +1,59 @@
 .contract-upload-page {
+  /* No default background as we use global dark theme */
   min-height: 100vh;
   display: flex;
   align-items: center;
   justify-content: center;
-  //background: linear-gradient(135deg, #683b2b 0%, #e7c3a2 100%);
 
   .upload-container {
-    width: 600px;
-    background: #fff;
+    width: 100%;
+    max-width: 800px;
+    background: transparent; /* Show sexy-card background instead */
     border-radius: 16px;
-    padding: 48px;
-    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+    padding: 0; /* Handled by internal sexy-card padding */
+  }
+}
 
-    .upload-header {
-      text-align: center;
-      margin-bottom: 40px;
-
-      h1 {
-        font-size: 28px;
-        font-weight: 600;
-        color: #333;
-        margin-bottom: 12px;
-      }
-
-      p {
-        color: #666;
-        font-size: 14px;
-      }
+/* Custom modal styling for dark theme if needed */
+.dark-modal {
+  .ant-modal-content {
+    background: rgba(20, 20, 22, 0.8) !important;
+    backdrop-filter: blur(20px) !important;
+    border: 1px solid rgba(255, 255, 255, 0.1) !important;
+    box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5) !important;
+  }
+  
+  .ant-modal-header {
+    background: transparent !important;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1) !important;
+    padding-bottom: 16px;
+    
+    .ant-modal-title {
+      color: #fff !important;
     }
-
-    .upload-content {
-      .ant-upload-drag {
-        border-radius: 8px;
+  }
+  
+  .ant-modal-close {
+    color: rgba(255, 255, 255, 0.45) !important;
+    &:hover {
+      color: #fff !important;
+    }
+  }
+  
+  .ant-modal-footer {
+    border-top: 1px solid rgba(255, 255, 255, 0.1) !important;
+    padding-top: 16px;
+  }
+  
+  .ant-input-textarea {
+    textarea {
+      background: rgba(0, 0, 0, 0.2) !important;
+      border-color: rgba(255, 255, 255, 0.1) !important;
+      color: #e2e8f0 !important;
+      
+      &:hover, &:focus {
+        border-color: #3b82f6 !important;
+        box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.2) !important;
       }
     }
   }
