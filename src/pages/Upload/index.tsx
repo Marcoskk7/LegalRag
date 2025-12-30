@@ -1,9 +1,11 @@
 import { InboxOutlined } from '@ant-design/icons';
 import { history } from '@umijs/max';
 import type { UploadFile, UploadProps } from 'antd';
-import { Button, Input, message, Modal, Upload } from 'antd';
+import { Button, Input, Modal, Upload, message, Space } from 'antd';
 import React, { useState } from 'react';
+import { uploadFile } from './api';
 import './index.less';
+import DottedGlowBackground from '@/components/DottedGlowBackground';
 
 const { Dragger } = Upload;
 
@@ -14,25 +16,6 @@ const ContractUpload: React.FC = () => {
   const [txtEditOpen, setTxtEditOpen] = useState(false);
   const [txtEditValue, setTxtEditValue] = useState('');
   const [pendingTxtFileName, setPendingTxtFileName] = useState<string>('');
-
-  const apiBaseUrl = 'http://api.legalrag.studio';
-  const uploadUrl = `${apiBaseUrl}/api/v1/upload`;
-
-  const doUpload = async (file: File) => {
-    const formData = new FormData();
-    formData.append('file', file);
-
-    const resp = await fetch(uploadUrl, {
-      method: 'POST',
-      body: formData,
-    });
-
-    if (!resp.ok) {
-      throw new Error(`HTTP ${resp.status}`);
-    }
-
-    return (await resp.json()) as any;
-  };
 
   const uploadProps: UploadProps = {
     name: 'file',
@@ -90,7 +73,7 @@ const ContractUpload: React.FC = () => {
 
       try {
         setUploading(true);
-        const res = await doUpload(file as File);
+        const res = await uploadFile(file as File);
         setUploading(false);
 
         if (res?.success) {
@@ -122,7 +105,7 @@ const ContractUpload: React.FC = () => {
         type: 'text/plain',
       });
 
-      const res = await doUpload(editedFile);
+      const res = await uploadFile(editedFile);
       setUploading(false);
 
       if (res?.success) {
@@ -155,103 +138,114 @@ const ContractUpload: React.FC = () => {
       return;
     }
 
-    // 跳转并传递 fileId
-    //   history.push({
-    //     pathname: '/contract-analysis',
-    //     query: { fileId }
-    //   });
     history.push(`/contract-analysis?fileId=${fileId}`);
   };
 
   return (
-    <div className="min-h-[calc(100vh-64px)] bg-gradient-to-b from-slate-50 to-white px-4 py-10 flex items-center justify-center">
-      <div className="w-full max-w-3xl rounded-2xl bg-white border border-slate-100 shadow-xl overflow-hidden">
-        {/* 顶部渐变说明条 */}
-        <div className="bg-gradient-to-r from-brand-600 to-blue-500 px-6 py-4 flex items-center justify-between">
-          <div>
-            <p className="text-xs font-semibold tracking-wide text-brand-50/80 uppercase">
-              LegalRag
-            </p>
-            <p className="text-sm text-brand-50">合同智能审查系统</p>
-          </div>
-          <span className="rounded-full border border-white/30 bg-white/10 px-3 py-1 text-xs text-brand-50">
-            上传 · 分析 · 风险评估
-          </span>
-        </div>
-
-        {/* 浅色卡片主体 */}
-        <div className="px-6 py-8">
-          <div className="mb-8 text-center space-y-2">
-            <h1 className="text-2xl font-semibold text-slate-900">
-              合同智能审查系统
-            </h1>
-            <p className="text-sm text-slate-500">
-              上传合同文件，AI 为您进行风险识别和法律审查
-            </p>
+    <div style={{ position: 'relative', width: '100vw', minHeight: '100vh', background: '#09090b', overflowX: 'hidden', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+      <DottedGlowBackground />
+      
+      <div style={{ position: 'relative', zIndex: 1, padding: '24px', width: '100%', maxWidth: '800px' }}>
+        <div className="sexy-card overflow-hidden">
+          {/* 顶部说明条 */}
+          <div className="px-6 py-4 flex items-center justify-between border-b border-white/10 bg-white/5">
+            <div>
+              <p className="text-xs font-semibold tracking-wide text-brand-200/80 uppercase">
+                LegalRag
+              </p>
+              <p className="text-sm text-brand-100 font-medium">合同智能审查系统</p>
+            </div>
+            <span className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs text-brand-50 backdrop-blur-md">
+              上传 · 分析 · 风险评估
+            </span>
           </div>
 
-          <div className="space-y-6">
-            <Dragger
-              {...uploadProps}
-              className="bg-slate-50 border-2 border-dashed border-slate-200 hover:border-brand-500 rounded-xl transition-colors"
-            >
-              <p className="ant-upload-drag-icon text-brand-500 text-4xl">
-                <InboxOutlined />
+          {/* 主体内容 */}
+          <div className="px-8 py-10">
+            <div className="mb-10 text-center space-y-3">
+              <h1 className="text-3xl font-bold text-white tracking-tight">
+                上传您的合同
+              </h1>
+              <p className="text-slate-400 max-w-md mx-auto">
+                支持多种文档格式，AI 将自动为您识别潜在法律风险并提供专业修改建议。
               </p>
-              <p className="ant-upload-text text-slate-800 font-medium">
-                点击或拖拽文件到此区域上传
-              </p>
-              <p className="ant-upload-hint text-slate-500 text-xs md:text-sm">
-                支持 PDF、Word (doc/docx) 和 TXT 格式，单个文件不超过 50MB
-              </p>
-            </Dragger>
+            </div>
 
-            <Modal
-              title="编辑 TXT 内容"
-              open={txtEditOpen}
-              okText="保存并上传"
-              cancelText="取消"
-              confirmLoading={uploading}
-              onOk={handleUploadEditedTxt}
-              onCancel={() => {
-                setTxtEditOpen(false);
-                setTxtEditValue('');
-                setPendingTxtFileName('');
-                setFileList([]);
-                setFileId('');
-              }}
-              width={900}
-              destroyOnClose
-            >
-              <div className="space-y-3">
-                <div className="text-xs text-slate-500">
-                  仅对 TXT 文件支持在线修改；PDF/Word 请直接上传。
-                </div>
-                <Input.TextArea
-                  value={txtEditValue}
-                  onChange={(e) => setTxtEditValue(e.target.value)}
-                  autoSize={{ minRows: 16, maxRows: 28 }}
-                />
+            <div className="space-y-8">
+              <div className="shimmer-loading rounded-xl">
+                <Dragger
+                  {...uploadProps}
+                  className="!bg-white/5 !border-2 !border-dashed !border-white/10 hover:!border-brand-500/50 !rounded-xl transition-all duration-300"
+                >
+                  <p className="ant-upload-drag-icon !text-brand-400 !mb-4">
+                    <InboxOutlined style={{ fontSize: 48 }} />
+                  </p>
+                  <p className="ant-upload-text !text-slate-200 !text-lg !font-medium">
+                    点击或拖拽文件到此区域上传
+                  </p>
+                  <p className="ant-upload-hint !text-slate-500 !mt-2">
+                    支持 PDF、Word (doc/docx) 和 TXT 格式，不超过 50MB
+                  </p>
+                </Dragger>
               </div>
-            </Modal>
 
-            <div className="flex flex-col gap-3 text-xs md:text-sm text-slate-500 md:flex-row md:items-center md:justify-between">
-              <span>
-                上传完成后，我们会自动为您生成风险列表、修改建议和适用法律条款。
-              </span>
-              <Button
-                type="primary"
-                size="large"
-                disabled={!fileId || uploading}
-                loading={uploading}
-                className="md:w-40 w-full !h-11 !rounded-xl bg-brand-600 hover:bg-brand-700"
-                onClick={handleStartAnalysis}
-              >
-                开始智能分析
-              </Button>
+              <div className="flex flex-col gap-6 md:flex-row md:items-center md:justify-between pt-4 border-t border-white/5">
+                <div className="flex-1">
+                  <p className="text-sm text-slate-400 leading-relaxed">
+                    上传完成后，点击下方按钮开始智能分析。
+                  </p>
+                </div>
+                <Button
+                  type="primary"
+                  size="large"
+                  disabled={!fileId || uploading}
+                  loading={uploading}
+                  className={`!h-12 !px-8 !rounded-xl !text-lg !font-semibold transition-all ${
+                    fileId 
+                      ? '!bg-brand-600 hover:!bg-brand-500 hover:!scale-105 shadow-lg shadow-brand-600/20' 
+                      : '!bg-slate-800 !text-slate-500 !border-none'
+                  }`}
+                  onClick={handleStartAnalysis}
+                >
+                  开始智能分析
+                </Button>
+              </div>
             </div>
           </div>
         </div>
+
+        {/* Modal styling needs to handle dark theme content or remain light for contrast */}
+        <Modal
+          title={<span className="font-semibold">编辑 TXT 内容</span>}
+          open={txtEditOpen}
+          okText="保存并上传"
+          cancelText="取消"
+          confirmLoading={uploading}
+          onOk={handleUploadEditedTxt}
+          onCancel={() => {
+            setTxtEditOpen(false);
+            setTxtEditValue('');
+            setPendingTxtFileName('');
+            setFileList([]);
+            setFileId('');
+          }}
+          width={900}
+          destroyOnClose
+          className="dark-modal"
+        >
+          <div className="space-y-4 py-2">
+            <div className="text-sm text-slate-500 flex items-center gap-2">
+              <span className="w-2 h-2 bg-brand-500 rounded-full animate-pulse"></span>
+              仅对 TXT 文件支持在线修改；PDF/Word 请直接上传。
+            </div>
+            <Input.TextArea
+              value={txtEditValue}
+              onChange={(e) => setTxtEditValue(e.target.value)}
+              autoSize={{ minRows: 16, maxRows: 28 }}
+              className="!bg-black/20 !border-white/10 !rounded-lg !p-4 !text-base !leading-relaxed !text-slate-200 placeholder:!text-slate-600"
+            />
+          </div>
+        </Modal>
       </div>
     </div>
   );
