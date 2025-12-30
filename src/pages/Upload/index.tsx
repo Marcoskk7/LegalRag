@@ -5,7 +5,7 @@ import { Button, Input, Modal, Upload, message, Space } from 'antd';
 import React, { useState } from 'react';
 import { uploadFile } from './api';
 import './index.less';
-import DottedGlowBackground from '@/components/DottedGlowBackground';
+import UploadBackground from '@/components/UploadBackground';
 
 const { Dragger } = Upload;
 
@@ -142,8 +142,8 @@ const ContractUpload: React.FC = () => {
   };
 
   return (
-    <div style={{ position: 'relative', width: '100vw', minHeight: '100vh', background: '#09090b', overflowX: 'hidden', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-      <DottedGlowBackground />
+    <div style={{ position: 'relative', width: '100vw', height: '100vh', minHeight: '100vh', background: '#09090b', overflow: 'hidden', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+      <UploadBackground />
       
       <div style={{ position: 'relative', zIndex: 1, padding: '24px', width: '100%', maxWidth: '800px' }}>
         <div className="sexy-card overflow-hidden">
