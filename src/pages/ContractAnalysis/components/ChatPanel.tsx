@@ -1,6 +1,8 @@
 import { Send, Sparkles, User } from 'lucide-react';
 import React, { useEffect, useRef, useState } from 'react';
-import { Button, Input, Spin } from 'antd';
+import { Button, Input } from 'antd';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import { streamChat } from '../chatService';
 import { ChatMessage, GroundingMetadata } from '../typing';
 import './ChatPanel.less';
@@ -46,6 +48,7 @@ const ChatPanel: React.FC = () => {
       role: 'assistant',
       content: '',
       isLoading: true,
+      groundingMetadata: undefined,
     };
     setMessages((prev) => [...prev, assistantMsg]);
 
@@ -108,7 +111,7 @@ const ChatPanel: React.FC = () => {
     if (!metadata?.urls || metadata.urls.length === 0) return null;
     
     // Prefer grounding_chunks if available for titles, otherwise fallback to urls
-    const links = metadata.urls.map((url, index) => {
+    const links = metadata.urls.map((url) => {
         const chunk = metadata.grounding_chunks?.find(c => c.web.uri === url);
         const title = chunk?.web.title || new URL(url).hostname;
         return { url, title };
@@ -118,19 +121,35 @@ const ChatPanel: React.FC = () => {
     const uniqueLinks = Array.from(new Map(links.map(item => [item.url, item])).values());
 
     return (
-      <div className="grounding-cards">
-        {uniqueLinks.map((link, idx) => (
-          <a
-            key={idx}
-            href={link.url}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="vercel-link-card"
-          >
-            <div className="card-title" title={link.title}>{link.title}</div>
-            <div className="card-url" title={link.url}>{link.url}</div>
-          </a>
-        ))}
+      <div className="grounding-section">
+        <div className="section-title">参考来源</div>
+        <div className="grounding-cards">
+          {uniqueLinks.map((link, idx) => {
+             const domain = new URL(link.url).hostname;
+             return (
+              <a
+                key={idx}
+                href={link.url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="vercel-link-card"
+              >
+                <div className="card-header">
+                    <img 
+                        src={`https://www.google.com/s2/favicons?domain=${domain}`} 
+                        alt="" 
+                        className="card-icon"
+                        onError={(e) => {
+                            (e.target as HTMLImageElement).style.display = 'none';
+                        }}
+                    />
+                    <div className="card-title" title={link.title}>{link.title}</div>
+                </div>
+                <div className="card-url" title={link.url}>{link.url}</div>
+              </a>
+            );
+          })}
+        </div>
       </div>
     );
   };
@@ -148,16 +167,40 @@ const ChatPanel: React.FC = () => {
         
         {messages.map((msg) => (
           <div key={msg.id} className={`message ${msg.role}`}>
-             <div className="flex flex-row items-end gap-2">
+             <div className="flex flex-row items-end gap-2 w-full">
                 {msg.role === 'assistant' && (
-                    <div className="w-6 h-6 rounded-full bg-brand-500/20 flex items-center justify-center border border-brand-500/30">
+                    <div className="w-6 h-6 rounded-full bg-brand-500/20 flex items-center justify-center border border-brand-500/30 shrink-0 self-start mt-1">
                         <Sparkles size={14} className="text-brand-400" />
                     </div>
                 )}
                 
-                <div className="flex flex-col max-w-full">
-                    <div className="message-content whitespace-pre-wrap">
-                      {msg.content}
+                <div className="flex flex-col max-w-full min-w-0 flex-1">
+                    <div className="message-content">
+                      <ReactMarkdown 
+                        remarkPlugins={[remarkGfm]}
+                        components={{
+                          a: ({ node, ...props }) => (
+                            <a {...props} target="_blank" rel="noopener noreferrer" className="text-brand-400 hover:underline" />
+                          ),
+                          code: ({ node, ...props }) => (
+                             <code {...props} className="bg-black/30 rounded px-1 py-0.5 font-mono text-sm" />
+                          ),
+                          pre: ({ node, ...props }) => (
+                             <pre {...props} className="bg-black/30 rounded p-2 overflow-x-auto my-2" />
+                          ),
+                          ul: ({ node, ...props }) => (
+                             <ul {...props} className="list-disc list-inside my-2 space-y-1" />
+                          ),
+                          ol: ({ node, ...props }) => (
+                             <ol {...props} className="list-decimal list-inside my-2 space-y-1" />
+                          ),
+                          p: ({ node, ...props }) => (
+                             <p {...props} className="mb-2 last:mb-0" />
+                          )
+                        }}
+                      >
+                        {msg.content}
+                      </ReactMarkdown>
                       {msg.isLoading && (
                         <span className="inline-block w-2 h-4 ml-1 align-middle bg-brand-400 animate-pulse"/>
                       )}
@@ -166,7 +209,7 @@ const ChatPanel: React.FC = () => {
                 </div>
 
                 {msg.role === 'user' && (
-                    <div className="w-6 h-6 rounded-full bg-slate-700 flex items-center justify-center border border-slate-600">
+                    <div className="w-6 h-6 rounded-full bg-slate-700 flex items-center justify-center border border-slate-600 shrink-0">
                         <User size={14} className="text-slate-300" />
                     </div>
                 )}
@@ -200,4 +243,3 @@ const ChatPanel: React.FC = () => {
 };
 
 export default ChatPanel;
-

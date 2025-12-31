@@ -19,6 +19,8 @@
     "antd": "^5.4.0",
     "lucide": "^0.554.0",
     "lucide-react": "^0.554.0",
+    "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.1",
     "three": "^0.166.1"
   },
   "devDependencies": {

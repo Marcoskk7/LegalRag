@@ -2,7 +2,7 @@
   display: flex;
   flex-direction: column;
   height: 100%;
-  background-color: transparent; // Rely on container background
+  background-color: transparent;
   color: #e2e8f0;
 
   .chat-messages {
@@ -11,7 +11,7 @@
     padding: 16px;
     display: flex;
     flex-direction: column;
-    gap: 20px;
+    gap: 24px;
 
     &::-webkit-scrollbar {
       width: 6px;
@@ -32,7 +32,7 @@
         align-items: flex-end;
 
         .message-content {
-          background-color: #3b82f6; // brand-500 equivalent
+          background-color: #3b82f6;
           color: white;
           border-radius: 12px 12px 0 12px;
         }
@@ -41,42 +41,69 @@
       &.assistant {
         align-self: flex-start;
         align-items: flex-start;
+        width: 100%;
 
         .message-content {
           background-color: rgba(255, 255, 255, 0.05);
           border: 1px solid rgba(255, 255, 255, 0.1);
           color: #e2e8f0;
           border-radius: 12px 12px 12px 0;
+          width: fit-content;
         }
       }
 
-      .message-role {
-        font-size: 11px;
-        color: rgba(255, 255, 255, 0.4);
-        margin-left: 4px;
-        margin-right: 4px;
-      }
-
       .message-content {
-        padding: 10px 14px;
+        padding: 12px 16px;
         font-size: 14px;
         line-height: 1.6;
         word-break: break-word;
 
         p {
-          margin-bottom: 0.5em;
+          margin-bottom: 0.8em;
           &:last-child {
             margin-bottom: 0;
           }
         }
+        
+        pre {
+            margin: 0.8em 0;
+        }
+
+        ul, ol {
+            padding-left: 1.2em;
+            margin-bottom: 0.8em;
+        }
       }
 
-      .grounding-cards {
-        display: grid;
-        grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
-        gap: 8px;
-        margin-top: 10px;
+      .grounding-section {
+        margin-top: 12px;
         width: 100%;
+        
+        .section-title {
+            font-size: 12px;
+            font-weight: 600;
+            color: #94a3b8;
+            margin-bottom: 8px;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            
+            &::before {
+                content: '';
+                display: block;
+                width: 12px;
+                height: 12px;
+                background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%2394a3b8' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='11' cy='11' r='8'%3E%3C/circle%3E%3Cline x1='21' y1='21' x2='16.65' y2='16.65'%3E%3C/line%3E%3C/svg%3E");
+                background-size: contain;
+                background-repeat: no-repeat;
+            }
+        }
+
+        .grounding-cards {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+            gap: 12px;
+        }
       }
     }
   }
@@ -89,19 +116,22 @@
     .input-wrapper {
       position: relative;
       display: flex;
-      gap: 8px;
+      gap: 12px;
 
       textarea {
         background-color: rgba(255, 255, 255, 0.05);
         border: 1px solid rgba(255, 255, 255, 0.1);
         color: white;
-        border-radius: 8px;
+        border-radius: 12px;
         resize: none;
-        padding: 10px;
+        padding: 12px;
         font-size: 14px;
+        line-height: 1.5;
+        transition: all 0.2s;
         
         &:focus {
           border-color: #3b82f6;
+          background-color: rgba(255, 255, 255, 0.08);
           box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.2);
           outline: none;
         }
@@ -112,50 +142,58 @@
       }
     }
   }
-}
 
-// Vercel-style Link Card
-.vercel-link-card {
-  display: flex;
-  flex-direction: column;
-  padding: 12px;
-  background-color: rgba(255, 255, 255, 0.03);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 8px;
-  text-decoration: none;
-  transition: all 0.2s ease;
-  overflow: hidden;
-
-  &:hover {
-    background-color: rgba(255, 255, 255, 0.08);
-    border-color: rgba(255, 255, 255, 0.2);
-    transform: translateY(-1px);
-  }
-
-  .card-title {
-    font-size: 13px;
-    font-weight: 600;
-    color: #e2e8f0;
-    margin-bottom: 4px;
-    white-space: nowrap;
+  // Vercel-style Link Card
+  .vercel-link-card {
+    display: flex;
+    flex-direction: column;
+    padding: 12px;
+    background-color: rgba(255, 255, 255, 0.03);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 12px;
+    text-decoration: none;
+    transition: all 0.2s ease;
     overflow: hidden;
-    text-overflow: ellipsis;
-  }
+    position: relative;
 
-  .card-url {
-    font-size: 11px;
-    color: #94a3b8;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-  
-  .card-domain-icon {
-      width: 16px;
-      height: 16px;
-      border-radius: 50%;
-      background: rgba(255,255,255,0.1);
-      margin-right: 6px;
+    &:hover {
+      background-color: rgba(255, 255, 255, 0.08);
+      border-color: rgba(255, 255, 255, 0.2);
+      transform: translateY(-2px);
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+    }
+
+    .card-header {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin-bottom: 6px;
+        
+        .card-icon {
+            width: 16px;
+            height: 16px;
+            border-radius: 4px;
+            object-fit: contain;
+        }
+        
+        .card-title {
+            font-size: 13px;
+            font-weight: 500;
+            color: #e2e8f0;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            flex: 1;
+        }
+    }
+
+    .card-url {
+      font-size: 11px;
+      color: #94a3b8;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      opacity: 0.8;
+    }
   }
 }
-
