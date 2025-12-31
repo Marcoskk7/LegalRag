@@ -37,6 +37,12 @@ export default defineConfig({
       path: '/contract-analysis',
       component: './ContractAnalysis',
     },
+    {
+      name: '历史记录',
+      path: '/history',
+      component: './History',
+    },
   ],
   npmClient: 'pnpm',
+  mfsu: false,
 });

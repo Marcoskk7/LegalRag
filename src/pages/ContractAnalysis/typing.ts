@@ -119,3 +119,31 @@ export interface ApiStatusResponse {
   analyzer_version?: string;
   error?: string | null;
 }
+
+// ============ 本地 UI 状态类型 ============
+
+export type ExportSection = 'risks' | 'suggestions' | 'legal' | 'contract';
+
+export type SuggestionDecision = 'accepted' | 'rejected' | 'undecided';
+
+export type AppliedEdit = {
+  suggestionId: string;
+  range: { start: number; end: number };
+};
+
+export type BaseToEditedSegment =
+  | {
+      kind: 'copy';
+      baseStart: number;
+      baseEnd: number;
+      outStart: number;
+      outEnd: number;
+    }
+  | {
+      kind: 'replace';
+      suggestionId: string;
+      baseStart: number;
+      baseEnd: number;
+      outStart: number;
+      outEnd: number;
+    };

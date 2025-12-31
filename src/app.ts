@@ -14,5 +14,12 @@ export const layout = () => {
       locale: false,
     },
     defaultCollapsed: true,
+    navTheme: 'realDark',
+    layout: 'side',
+    splitMenus: false,
+    colorPrimary: '#3b82f6',
+    siderMenuType: 'sub',
+    headerRender: false,
+    menuHeaderRender: undefined,
   };
 };
