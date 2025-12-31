@@ -120,6 +120,20 @@ export interface ApiStatusResponse {
   error?: string | null;
 }
 
+/** API: GET /api/v1/history/{uuid} 响应 */
+export interface ApiHistoryDetailResponse {
+  success: boolean;
+  message?: string;
+  data: {
+    raw_content: string;
+    content_created_at: string;
+    risks: ApiRisk[];
+    risk_status: 'success' | 'failed' | 'analyzing' | 'init';
+    risks_generated_at?: string;
+    risk_error?: string | null;
+  };
+}
+
 // ============ 本地 UI 状态类型 ============
 
 export type ExportSection = 'risks' | 'suggestions' | 'legal' | 'contract';
@@ -147,3 +161,45 @@ export type BaseToEditedSegment =
       outStart: number;
       outEnd: number;
     };
+
+// ============ Chat 相关类型 ============
+
+export interface ChatMessage {
+  id: string;
+  role: 'user' | 'assistant';
+  content: string;
+  // AI 回复可能包含的额外信息
+  isLoading?: boolean;
+  groundingMetadata?: GroundingMetadata;
+}
+
+export interface GroundingMetadata {
+  web_search_queries?: string[];
+  grounding_chunks?: Array<{
+    web: {
+      uri: string;
+      title?: string;
+    };
+  }>;
+  grounding_supports?: Array<{
+    segment: {
+      start_index: number;
+      end_index: number;
+      text: string;
+    };
+    grounding_chunk_indices: number[];
+  }>;
+  search_entry_point?: {
+    rendered_content: string;
+  };
+  urls?: string[];
+}
+
+export interface ChatRequest {
+  message?: string;
+  messages?: Array<{
+    role: 'user' | 'assistant';
+    content: string;
+  }>;
+  temperature?: number;
+}

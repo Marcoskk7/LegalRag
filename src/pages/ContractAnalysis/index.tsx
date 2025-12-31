@@ -29,6 +29,7 @@ import {
   uploadEditedFile,
 } from './api';
 import './index.less';
+import ChatPanel from './components/ChatPanel';
 import {
   AnalysisResult,
   ApiRisk,
@@ -87,6 +88,7 @@ const ContractAnalysis: React.FC = () => {
     null,
   );
   const [isEditingContract, setIsEditingContract] = useState(false);
+  const [rightPanelTab, setRightPanelTab] = useState<'analysis' | 'chat'>('analysis');
 
   // 逐条采纳/拒绝建议
   const [suggestionDecisions, setSuggestionDecisions] = useState<
@@ -258,19 +260,25 @@ const ContractAnalysis: React.FC = () => {
 
     if (fromHistory && fileId) {
       const historyRes = await fetchHistoryDetail(fileId);
-      if (historyRes && historyRes.status === 'success') {
+      // 历史接口返回格式：{ success: true, data: { raw_content, risks, risk_status, ... } }
+      if (historyRes?.success && historyRes.data?.risk_status === 'success') {
         setAnalysisStatus('success');
         
-        let content = historyRes.raw_content || '';
-        if (!content) {
-          const contentRes = await fetchDocumentContent(fileId);
-          if (contentRes?.raw_content) {
-            content = contentRes.raw_content;
-          }
-        }
-        
+        const content = historyRes.data.raw_content || '';
         setDocumentContent(content);
-        const transformed = transformApiResponse(historyRes, content);
+        
+        // 将历史数据转换为 ApiRisksResponse 格式以复用 transformApiResponse
+        const risksResponseForTransform = {
+          uuid: fileId,
+          raw_content: content,
+          risks: historyRes.data.risks || [],
+          generated_at: historyRes.data.risks_generated_at || '',
+          analyzer_version: '',
+          data_inconsistent: false,
+          status: 'success' as const,
+        };
+        
+        const transformed = transformApiResponse(risksResponseForTransform, content);
         setAnalysisResult(transformed);
         setLoading(false);
         return;
@@ -1544,12 +1552,41 @@ const ContractAnalysis: React.FC = () => {
                     {/* 右侧：分析结果 + 风险详情 */}
                     <div className="split-right">
                       <div className="analysis-panel h-full">
-                        {/* 风险详情 */}
+                        {/* 风险详情 / Chat */}
                         <div className="sexy-card h-full flex flex-col overflow-hidden">
-                            <div className="p-4 border-b border-white/10 bg-white/5">
-                                <span className="text-white font-semibold">风险详情</span>
+                            <div className="px-4 py-3 border-b border-white/10 bg-white/5 flex gap-6">
+                                <button
+                                    onClick={() => setRightPanelTab('analysis')}
+                                    className={`text-sm font-semibold transition-colors relative ${
+                                        rightPanelTab === 'analysis'
+                                            ? 'text-white'
+                                            : 'text-slate-400 hover:text-slate-200'
+                                    }`}
+                                >
+                                    风险详情
+                                    {rightPanelTab === 'analysis' && (
+                                        <div className="absolute -bottom-[13px] left-0 right-0 h-[2px] bg-brand-500" />
+                                    )}
+                                </button>
+                                <button
+                                    onClick={() => setRightPanelTab('chat')}
+                                    className={`text-sm font-semibold transition-colors relative ${
+                                        rightPanelTab === 'chat'
+                                            ? 'text-white'
+                                            : 'text-slate-400 hover:text-slate-200'
+                                    }`}
+                                >
+                                    AI 助手
+                                    {rightPanelTab === 'chat' && (
+                                        <div className="absolute -bottom-[13px] left-0 right-0 h-[2px] bg-brand-500" />
+                                    )}
+                                </button>
                             </div>
-                            <div className="p-5 flex-1 overflow-y-auto">
+                            
+                            {rightPanelTab === 'chat' ? (
+                                <ChatPanel />
+                            ) : (
+                                <div className="p-5 flex-1 overflow-y-auto">
                               {selectedRiskDetail ? (
                                 <div className="detail-container">
                                   <div
@@ -1667,6 +1704,7 @@ const ContractAnalysis: React.FC = () => {
                                 </div>
                               )}
                             </div>
+                            )}
                         </div>
                       </div>
                     </div>

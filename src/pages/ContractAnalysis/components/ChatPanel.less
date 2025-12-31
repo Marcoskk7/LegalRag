@@ -1,0 +1,161 @@
+.chat-panel {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  background-color: transparent; // Rely on container background
+  color: #e2e8f0;
+
+  .chat-messages {
+    flex: 1;
+    overflow-y: auto;
+    padding: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+
+    &::-webkit-scrollbar {
+      width: 6px;
+    }
+    &::-webkit-scrollbar-thumb {
+      background: rgba(255, 255, 255, 0.1);
+      border-radius: 3px;
+    }
+
+    .message {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      max-width: 90%;
+
+      &.user {
+        align-self: flex-end;
+        align-items: flex-end;
+
+        .message-content {
+          background-color: #3b82f6; // brand-500 equivalent
+          color: white;
+          border-radius: 12px 12px 0 12px;
+        }
+      }
+
+      &.assistant {
+        align-self: flex-start;
+        align-items: flex-start;
+
+        .message-content {
+          background-color: rgba(255, 255, 255, 0.05);
+          border: 1px solid rgba(255, 255, 255, 0.1);
+          color: #e2e8f0;
+          border-radius: 12px 12px 12px 0;
+        }
+      }
+
+      .message-role {
+        font-size: 11px;
+        color: rgba(255, 255, 255, 0.4);
+        margin-left: 4px;
+        margin-right: 4px;
+      }
+
+      .message-content {
+        padding: 10px 14px;
+        font-size: 14px;
+        line-height: 1.6;
+        word-break: break-word;
+
+        p {
+          margin-bottom: 0.5em;
+          &:last-child {
+            margin-bottom: 0;
+          }
+        }
+      }
+
+      .grounding-cards {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+        gap: 8px;
+        margin-top: 10px;
+        width: 100%;
+      }
+    }
+  }
+
+  .chat-input-area {
+    padding: 16px;
+    border-top: 1px solid rgba(255, 255, 255, 0.1);
+    background-color: rgba(0, 0, 0, 0.2);
+
+    .input-wrapper {
+      position: relative;
+      display: flex;
+      gap: 8px;
+
+      textarea {
+        background-color: rgba(255, 255, 255, 0.05);
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        color: white;
+        border-radius: 8px;
+        resize: none;
+        padding: 10px;
+        font-size: 14px;
+        
+        &:focus {
+          border-color: #3b82f6;
+          box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.2);
+          outline: none;
+        }
+        
+        &::placeholder {
+            color: rgba(255, 255, 255, 0.3);
+        }
+      }
+    }
+  }
+}
+
+// Vercel-style Link Card
+.vercel-link-card {
+  display: flex;
+  flex-direction: column;
+  padding: 12px;
+  background-color: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  text-decoration: none;
+  transition: all 0.2s ease;
+  overflow: hidden;
+
+  &:hover {
+    background-color: rgba(255, 255, 255, 0.08);
+    border-color: rgba(255, 255, 255, 0.2);
+    transform: translateY(-1px);
+  }
+
+  .card-title {
+    font-size: 13px;
+    font-weight: 600;
+    color: #e2e8f0;
+    margin-bottom: 4px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .card-url {
+    font-size: 11px;
+    color: #94a3b8;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  
+  .card-domain-icon {
+      width: 16px;
+      height: 16px;
+      border-radius: 50%;
+      background: rgba(255,255,255,0.1);
+      margin-right: 6px;
+  }
+}
+
