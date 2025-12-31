@@ -18,7 +18,11 @@ export const Solutions: React.FC = () => {
                 &quot;LegalRag reduced our due diligence time by 70%.&quot;
               </p>
               <div className="flex items-center space-x-2">
-                <div className="w-8 h-8 bg-brand-500/20 rounded-full"></div>
+                <img
+                  src="https://images.unsplash.com/photo-1494790108377-be9c29b29330?q=80&w=150&h=150&auto=format&fit=crop&sat=-100"
+                  alt="Sarah Jenkins"
+                  className="w-8 h-8 rounded-full object-cover border border-white/20"
+                />
                 <div>
                   <div className="text-sm font-semibold text-slate-200">Sarah Jenkins</div>
                   <div className="text-xs text-slate-400">General Counsel, TechCorp</div>

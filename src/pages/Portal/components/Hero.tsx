@@ -65,17 +65,49 @@ export const Hero: React.FC = () => {
                 </div>
                 <div className="p-6 grid grid-cols-3 gap-4 mt-10">
                   <div className="col-span-2 space-y-4">
-                    <div className="h-24 rounded-lg bg-white/5 animate-pulse shimmer-loading"></div>
-                    <div className="h-24 rounded-lg bg-white/5 animate-pulse delay-75 shimmer-loading"></div>
-                    <div className="h-24 rounded-lg bg-white/5 animate-pulse delay-150 shimmer-loading"></div>
+                    <div className="h-24 rounded-lg bg-white/5 animate-pulse shimmer-loading p-4">
+                      <div className="flex items-center space-x-2 mb-2">
+                        <div className="h-2 w-16 bg-brand-500/40 rounded"></div>
+                        <div className="text-[10px] text-slate-500 uppercase tracking-wider">Risk Analysis</div>
+                      </div>
+                      <div className="text-[11px] text-slate-400 leading-relaxed">
+                        Liability clause identified in Section 4.2. Standard terms applied. 
+                        No high-risk deviations detected in the current draft.
+                      </div>
+                    </div>
+                    <div className="h-24 rounded-lg bg-white/5 animate-pulse delay-75 shimmer-loading p-4">
+                      <div className="flex items-center space-x-2 mb-2">
+                        <div className="h-2 w-12 bg-blue-500/40 rounded"></div>
+                        <div className="text-[10px] text-slate-500 uppercase tracking-wider">Compliance</div>
+                      </div>
+                      <div className="text-[11px] text-slate-400 leading-relaxed">
+                        GDPR Article 28 data processing requirements are met. 
+                        Data retention period is set to 5 years as per policy.
+                      </div>
+                    </div>
+                    <div className="h-24 rounded-lg bg-white/5 animate-pulse delay-150 shimmer-loading p-4">
+                      <div className="flex items-center space-x-2 mb-2">
+                        <div className="h-2 w-20 bg-purple-500/40 rounded"></div>
+                        <div className="text-[10px] text-slate-500 uppercase tracking-wider">Recommendations</div>
+                      </div>
+                      <div className="text-[11px] text-slate-400 leading-relaxed">
+                        Consider adding a specific governing law clause for the 
+                        California jurisdiction to enhance enforceability.
+                      </div>
+                    </div>
                   </div>
                   <div className="col-span-1 space-y-4">
                     <div className="h-full rounded-lg bg-brand-500/5 border border-brand-500/20 p-4">
                       <div className="w-10 h-10 bg-brand-500/20 rounded-full flex items-center justify-center mb-3">
                         <Search className="text-brand-400 w-5 h-5" />
                       </div>
-                      <div className="h-2 w-12 bg-white/10 rounded mb-2"></div>
-                      <div className="h-2 w-20 bg-white/10 rounded"></div>
+                      <div className="text-[12px] font-bold text-white mb-1">Smart Search</div>
+                      <div className="text-[10px] text-slate-500 mb-4 italic">"Termination rights..."</div>
+                      <div className="space-y-2">
+                        <div className="h-1 w-full bg-white/10 rounded"></div>
+                        <div className="h-1 w-full bg-white/10 rounded"></div>
+                        <div className="h-1 w-2/3 bg-white/10 rounded"></div>
+                      </div>
                     </div>
                   </div>
                 </div>
