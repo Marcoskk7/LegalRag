@@ -2,6 +2,7 @@ import { request } from '@umijs/max';
 import {
   ApiAnalyzeResponse,
   ApiDocumentContentResponse,
+  ApiHistoryDetailResponse,
   ApiRisk,
   ApiRisksResponse,
   ApiStatusResponse,
@@ -95,9 +96,9 @@ export const triggerAnalysis = async (
  */
 export const fetchHistoryDetail = async (
   uuid: string,
-): Promise<ApiRisksResponse | null> => {
+): Promise<ApiHistoryDetailResponse | null> => {
   try {
-    return await request<ApiRisksResponse>(
+    return await request<ApiHistoryDetailResponse>(
       `${API_BASE_URL}/api/v1/history/${uuid}`,
       { method: 'GET' },
     );
